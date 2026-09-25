@@ -1,0 +1,21 @@
+[project]
+name = "atlas-planner"
+version = "0.1.0"
+description = "Mobile-first Atlas Earth planning calculators"
+requires-python = ">=3.12,<3.13"
+dependencies = ["flet>=1.0,<2"]
+
+[project.optional-dependencies]
+dev = ["flet-cli>=1.0,<2", "flet-web>=1.0,<2"]
+
+[tool.flet]
+org = "com.atlasplanner"
+
+[tool.flet.app]
+path = "."
+
+[tool.flet.web]
+route_url_strategy = "hash"
+renderer = "canvaskit"
+pwa_background_color = "#F2F6F5"
+pwa_theme_color = "#087F72"
