@@ -1,19 +1,25 @@
 import unittest
 from datetime import date, timedelta
+from pathlib import Path
+import sys
 
-from atlas_income import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from atlas_planner.atlas_income import (
     BADGE_BONUS_TIERS,
     SPAIN_BOOST_TIERS,
     badge_bonus_percent,
     calculate_income,
     normal_boost_multiplier,
 )
-from minigame_model import (
+from atlas_planner.minigame_model import (
     GameRecord,
     TARGET_POSITIONS,
     backtest_by_event,
     estimate_victories_for_position,
+    estimate_event_pool,
     estimate_saved_session_pace,
+    infer_event_duration_minutes,
     predict_event,
 )
 
@@ -81,6 +87,22 @@ class AtlasIncomeTests(unittest.TestCase):
 
 
 class MinigameModelTests(unittest.TestCase):
+    def test_last_saturday_uses_fishing_vintage_not_regular_fishing(self):
+        self.assertEqual(infer_event_duration_minutes("2026-08-29", "Fishing(V)"), 60)
+        with self.assertRaises(ValueError):
+            infer_event_duration_minutes("2026-08-29", "Fishing")
+
+    def test_two_hour_history_is_duration_normalized_with_wider_range(self):
+        records = make_records()
+        pool = estimate_event_pool(records, "Racer", "2026-08-03", 180)
+        target = estimate_victories_for_position(
+            records, "Racer", 25, 150_000, "2026-08-03", 180
+        )
+        self.assertEqual(pool["estimated_coins"], 151_500)
+        self.assertEqual(target["estimated_victories"], 152)
+        self.assertLessEqual(target["lower_estimate"], round(target["estimated_victories"] * 0.8))
+        self.assertGreaterEqual(target["upper_estimate"], round(target["estimated_victories"] * 1.2))
+
     def test_saved_session_pace_uses_only_the_selected_game(self):
         pace = estimate_saved_session_pace(
             [

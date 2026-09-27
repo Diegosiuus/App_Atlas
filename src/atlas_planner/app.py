@@ -9,14 +9,14 @@ from typing import Callable
 
 import flet as ft
 
-from atlas_income import (
+from .atlas_income import (
     AVERAGE_DAYS_PER_MONTH,
     RARITIES,
     calculate_income,
     recommend_purchase_strategy,
     simulate_purchase,
 )
-from minigame_model import (
+from .minigame_model import (
     ACTIVE_GAMES,
     TARGET_POSITIONS,
     NORMAL_EVENT_WEEKDAYS,
@@ -27,7 +27,7 @@ from minigame_model import (
     load_records,
     predict_event,
 )
-from supabase_api import SupabaseConfig, SupabaseError
+from .supabase_api import SupabaseConfig, SupabaseError
 
 
 INK = "#1F2A2E"
@@ -118,7 +118,7 @@ def main(page: ft.Page) -> None:
     supabase = SupabaseConfig.from_environment()
     session: dict[str, str] = {}
     saved_game_sessions: list[dict] = []
-    data_path = Path(__file__).resolve().with_name("registro_juegos.txt")
+    data_path = Path(__file__).resolve().parent / "data" / "registro_juegos.txt"
     try:
         records = load_records(data_path)
         data_error = None
@@ -151,6 +151,10 @@ def main(page: ft.Page) -> None:
         options=[ft.DropdownOption(key=str(position), text=str(position)) for position in TARGET_POSITIONS],
         expand=True,
     )
+    player_field = ft.TextField(
+        label="Jugador del histórico (opcional)",
+        hint_text="Si no has iniciado sesión, usa un nombre ya presente en el registro",
+    )
     game_feedback = ft.Column(spacing=10)
     result_game_field = ft.Dropdown(
         label="Minijuego",
@@ -165,7 +169,7 @@ def main(page: ft.Page) -> None:
     )
     result_wins_field = _number_field("Victorias")
     result_position_field = _number_field("Puesto final")
-    result_minutes_field = _number_field("Minutos jugados", "30")
+    result_minutes_field = _number_field("Minutos jugados", "0")
     result_feedback = ft.Text("Inicia sesión para guardar resultados.", size=13, color=MUTED)
     result_history = ft.Column(spacing=6)
     email_field = ft.TextField(label="Correo electrónico", keyboard_type=ft.KeyboardType.EMAIL)
@@ -304,6 +308,13 @@ def main(page: ft.Page) -> None:
         save_game_result_button.disabled = True
         result_feedback.value = "Inicia sesión para guardar resultados."
         account_feedback.value = "Sesión cerrada en este dispositivo."
+        for index, view in enumerate(app_views):
+            view.visible = index == 2
+        for index, button in enumerate(nav_buttons):
+            button.style = ft.ButtonStyle(
+                bgcolor=TEAL if index == 2 else "transparent",
+                color="white" if index == 2 else INK,
+            )
         page.update()
 
     async def sign_in(e: ft.Event[ft.Button]) -> None:
@@ -527,6 +538,7 @@ def main(page: ft.Page) -> None:
                 records,
                 game_field.value or "Racer",
                 date_field.value or "",
+                player=(player_field.value or "").strip() or None,
             )
             personal_pace = (
                 estimate_saved_session_pace(saved_game_sessions, game_field.value or "Racer")
@@ -635,8 +647,9 @@ def main(page: ft.Page) -> None:
             _section_heading("Minijuegos", "Victorias orientativas para alcanzar el puesto"),
             ft.Row(controls=[game_field, target_field], spacing=10),
             date_field,
+            player_field,
             ft.Text(
-                "El tiempo personal usa tus partidas guardadas en esta cuenta. La duración se infiere del calendario.",
+                "Con sesión iniciada, el tiempo personal usa tus resultados guardados; si no, puedes indicar un jugador del histórico. La duración se infiere del calendario.",
                 size=12,
                 color=MUTED,
             ),
@@ -760,7 +773,6 @@ def main(page: ft.Page) -> None:
                                     spacing=1,
                                 ),
                                 ft.Container(expand=True)
-                                
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
@@ -800,7 +812,7 @@ def _metric_row(label: str, value: str) -> ft.Control:
 
 def _time_text(value: object) -> ft.Control:
     if not isinstance(value, dict):
-        return ft.Text("Tiempo personal: inicia sesión y guarda partidas de este minijuego para estimarlo.", size=12, color=MUTED)
+        return ft.Text("Tiempo personal: sin sesiones históricas para este jugador y juego.", size=12, color=MUTED)
     return ft.Text(
         "Tiempo personal estimado: "
         f"{value['central_minutes']} min (rango {value['optimistic_minutes']}–{value['pessimistic_minutes']} min), "

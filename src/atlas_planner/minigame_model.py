@@ -67,6 +67,8 @@ def infer_event_duration_minutes(value: date | str, game: str) -> int:
     if game == "Fishing(V)" and not is_last_saturday(event_date):
         raise ValueError("Fishing(V) is scheduled for the last Saturday of the month")
     if is_last_saturday(event_date):
+        if game == "Fishing":
+            raise ValueError("Los sábados se juega Fishing(V), no el Fishing normal")
         return 60
     if event_date.weekday() not in NORMAL_EVENT_WEEKDAYS:
         raise ValueError("regular minigames are scheduled Monday, Tuesday, Thursday, or Sunday")
@@ -206,15 +208,21 @@ def estimate_event_pool(
     comparable, duration_mismatch = _duration_subset(history, target_duration)
     weighted = [
         (
-            float(event["pool"]),
+            float(event["pool"]) * target_duration / int(event["duration"]),
             _day_weight(event["date"], target_date),
         )
         for event in comparable
     ]
+    central = _weighted_quantile(weighted, 0.5)
+    lower = _weighted_quantile(weighted, 0.2)
+    upper = _weighted_quantile(weighted, 0.8)
+    if duration_mismatch:
+        lower = min(lower, central * 0.8)
+        upper = max(upper, central * 1.2)
     return {
-        "estimated_coins": round(_weighted_quantile(weighted, 0.5)),
-        "lower_estimate": round(_weighted_quantile(weighted, 0.2)),
-        "upper_estimate": round(_weighted_quantile(weighted, 0.8)),
+        "estimated_coins": round(central),
+        "lower_estimate": round(lower),
+        "upper_estimate": round(upper),
         "sample_events": len(comparable),
         "duration_mismatch": duration_mismatch,
         "confidence": _confidence(len(comparable), duration_mismatch),
@@ -287,7 +295,9 @@ def estimate_victories_for_position(
         if not nearby:
             continue
 
-        event_wins = _weighted_quantile(nearby, 0.5)
+        source_duration = int(event["duration"])
+        duration_factor = duration_minutes / source_duration
+        event_wins = _weighted_quantile(nearby, 0.5) * duration_factor
         if target_position == 1500 and exact_records:
             # The rank-matched median is more reliable than event similarity
             # weights for this sparsely sampled tail threshold.
@@ -307,10 +317,15 @@ def estimate_victories_for_position(
         if target_position == 1500 and exact_position_events
         else _weighted_quantile(event_estimates, 0.5)
     )
+    lower_estimate = _weighted_quantile(event_estimates, 0.2)
+    upper_estimate = _weighted_quantile(event_estimates, 0.8)
+    if duration_mismatch:
+        lower_estimate = min(lower_estimate, central_victories * 0.8)
+        upper_estimate = max(upper_estimate, central_victories * 1.2)
     return {
         "estimated_victories": round(central_victories),
-        "lower_estimate": round(_weighted_quantile(event_estimates, 0.2)),
-        "upper_estimate": round(_weighted_quantile(event_estimates, 0.8)),
+        "lower_estimate": round(lower_estimate),
+        "upper_estimate": round(upper_estimate),
         "sample_events": len(event_estimates),
         "exact_position_events": exact_position_events,
         "duration_mismatch": duration_mismatch,

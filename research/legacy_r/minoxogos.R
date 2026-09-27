@@ -1,7 +1,23 @@
 #### ANALISE DOS MINIXOGOS DO ATLAS ####
 ########################################
 
-setwd("~/GitHub/App_Atlas")
+script_path <- tryCatch({
+  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+    rstudioapi::getActiveDocumentContext()$path
+  } else ""
+}, error = function(e) "")
+if (!nzchar(script_path)) {
+  script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+  if (length(script_arg)) script_path <- sub("^--file=", "", script_arg[[1]])
+}
+project_root <- if (nzchar(script_path)) {
+  normalizePath(file.path(dirname(script_path), "../.."), mustWork = TRUE)
+} else if (file.exists(file.path("src", "atlas_planner", "data", "registro_juegos.txt"))) {
+  normalizePath(".", mustWork = TRUE)
+} else {
+  normalizePath(file.path("..", ".."), mustWork = TRUE)
+}
+registro_path <- file.path(project_root, "src", "atlas_planner", "data", "registro_juegos.txt")
 
 # ============================================================
 # 1. LIBRERIAS
@@ -15,9 +31,9 @@ library(dplyr)
 # ============================================================
 # Dejaremos los datos crudos por si queremos revisar algo en el futuro, ya que
 # manipularemos en gran medida la base de datos orginal
-datos_crudos <- read.table("registro_juegos.txt", sep = "", header = TRUE)
+datos_crudos <- read.table(registro_path, sep = "", header = TRUE)
 
-datos <- read.table("registro_juegos.txt", sep = "", header = TRUE)
+datos <- read.table(registro_path, sep = "", header = TRUE)
 
 # --- Funcion: detectar si una fecha es el ultimo sabado del mes ---
 es_ultimo_sabado <- function(fecha) {

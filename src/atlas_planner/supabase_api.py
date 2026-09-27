@@ -14,11 +14,11 @@ from dotenv import load_dotenv
 
 
 PROFILE_COLUMNS = (
-    "user_id,common_parcels,rare_parcels,epic_parcels,legendary_parcels,"
+    "user_id,username,common_parcels,rare_parcels,epic_parcels,legendary_parcels,"
     "badge_count,normal_boost_hours_per_day,srb_boost_hours_per_month"
 )
 GAME_SESSION_COLUMNS = (
-    "id,game,event_date,victories,final_position,played_minutes,created_at"
+    "id,game,event_date,victories,final_position,played_minutes,review_status,created_at"
 )
 
 
@@ -34,7 +34,8 @@ class SupabaseConfig:
 
     @classmethod
     def from_environment(cls) -> SupabaseConfig | None:
-        load_dotenv(Path(__file__).resolve().with_name(".env"))
+        project_root = Path(__file__).resolve().parents[2]
+        load_dotenv(project_root / ".env")
         url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
         key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
         redirect_url = os.getenv("SUPABASE_EMAIL_REDIRECT_URL", "").strip()
@@ -89,14 +90,14 @@ class SupabaseConfig:
         except (ValueError, UnicodeDecodeError) as exc:
             raise SupabaseError("Supabase devolvió una respuesta inesperada.") from exc
 
-    def sign_up(self, email: str, password: str) -> dict:
+    def sign_up(self, email: str, password: str, username: str) -> dict:
         path = "/auth/v1/signup"
         if self.email_redirect_url:
             path += "?" + urlencode({"redirect_to": self.email_redirect_url})
         return self._request(
             path,
             method="POST",
-            payload={"email": email, "password": password},
+            payload={"email": email, "password": password, "data": {"username": username}},
         )
 
     def sign_in(self, email: str, password: str) -> dict:
@@ -138,4 +139,45 @@ class SupabaseConfig:
             payload=game_session,
             access_token=access_token,
             prefer="resolution=merge-duplicates,return=minimal",
+        )
+
+    def get_training_records(self, access_token: str) -> list[dict]:
+        select = "select=position,victories,coins_earned,event:minigame_events(game,event_date,duration_minutes,total_coins,archived)"
+        rows: list[dict] = []
+        offset = 0
+        while True:
+            page = self._request(
+                f"/rest/v1/minigame_observations?{select}&order=id.asc&limit=1000&offset={offset}",
+                access_token=access_token,
+            )
+            if not isinstance(page, list):
+                raise SupabaseError("Supabase devolvió un histórico de entrenamiento inesperado.")
+            rows.extend(page)
+            if len(page) < 1000:
+                return rows
+            offset += len(page)
+
+    def is_admin(self, access_token: str) -> bool:
+        result = self._request(
+            "/rest/v1/rpc/is_app_admin", method="POST", payload={}, access_token=access_token
+        )
+        return bool(result)
+
+    def get_pending_results(self, access_token: str) -> list[dict]:
+        return self._request(
+            "/rest/v1/rpc/admin_pending_game_results", method="POST", payload={}, access_token=access_token
+        )
+
+    def review_result(self, session_id: int, approve: bool, total_coins: int | None, duration_minutes: int | None, note: str, access_token: str) -> None:
+        self._request(
+            "/rest/v1/rpc/admin_review_game_result", method="POST",
+            payload={"p_session_id": session_id, "p_approve": approve, "p_total_coins": total_coins,
+                     "p_duration_minutes": duration_minutes, "p_note": note},
+            access_token=access_token,
+        )
+
+    def import_observations(self, rows: list[dict], access_token: str) -> None:
+        self._request(
+            "/rest/v1/rpc/admin_import_model_rows", method="POST",
+            payload={"p_rows": rows}, access_token=access_token,
         )

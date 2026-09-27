@@ -8,3 +8,13 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+.flet/
+*.egg-info/
+coverage.xml
+htmlcov/
+
+# Local player datasets: keep personal/raw observations out of GitHub.
+/registro_juegos.txt
+/jugadores_excluidos.txt
+/src/atlas_planner/data/registro_juegos.txt
+/data/private/

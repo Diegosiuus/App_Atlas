@@ -1,19 +1,41 @@
 # Atlas Planner
 
-Python mobile-first PWA prototype. Income profiles and personal game results synchronize with Supabase Auth and private user tables. Public prediction observations still come from the local `registro_juegos.txt`.
+Aplicación web instalable, pensada primero para móvil, para estimar ingresos de Atlas Earth y analizar resultados de minijuegos. La autenticación y los perfiles usan Supabase; los registros aprobados y anónimos alimentan las predicciones compartidas.
 
-## Run locally
+## Requisitos
+
+- Python 3.12
+- Proyecto Supabase con las migraciones de `supabase/migrations` aplicadas
+- Clave publishable de Supabase en `.env` (nunca uses una clave `service_role` en el cliente)
+
+## Desarrollo local
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install "flet>=1,<2" "flet-cli>=1,<2" "flet-web>=1,<2" "python-dotenv>=1,<2"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-# Add your Supabase publishable key and allowed email redirect URL to .env
-.\.venv\Scripts\flet.exe run --web --port 8551 app.py
+# Completa SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY y SUPABASE_EMAIL_REDIRECT_URL en .env
+.\.venv\Scripts\flet.exe run --web --port 8551 --assets assets src\main.py
 ```
 
-Open `http://127.0.0.1:8550` in a browser. For phone installation, the deployed site must use HTTPS; local HTTP is for development only.
+Abre `http://127.0.0.1:8551`. Para instalar la PWA en el móvil, el sitio publicado debe servirse mediante HTTPS; la dirección local es solo para desarrollo.
 
-Create an account or sign in from **Mi cuenta**. If email confirmation is enabled in Supabase, confirm the address before signing in. The current session is held in memory and is cleared when the app session ends. Profile rows are protected by the table's row-level security policies; never put a `service_role` key in this app.
+## Pruebas
 
-Run `supabase/migrations/0002_player_game_results.sql` in the Supabase SQL Editor before using **Resultados**. Each account can save one result per minigame and event date; saving that event again updates it. Personal results are private and are used only to estimate that user's pace.
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+## Estructura
+
+```text
+assets/                     Iconos y recursos web
+data/private/               Datos auxiliares privados, fuera del paquete de la app
+research/legacy_r/          Scripts originales de análisis en R
+src/atlas_planner/          Código de la aplicación y datos de entrenamiento locales
+src/main.py                 Entrada de Flet
+supabase/migrations/        Esquema y políticas versionadas de Supabase
+tests/                      Pruebas automatizadas
+```
+
+`src/atlas_planner/data/registro_juegos.txt` contiene las observaciones usadas localmente por el modelo. `data/private/jugadores_excluidos.txt` se conserva como dato de investigación local y no se carga en la app. No publiques datos personales ni secretos en el repositorio.
