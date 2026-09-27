@@ -3,7 +3,7 @@ name = "atlas-planner"
 version = "0.1.0"
 description = "Mobile-first Atlas Earth planning calculators"
 requires-python = ">=3.12,<3.13"
-dependencies = ["flet>=1.0,<2"]
+dependencies = ["flet>=1.0,<2", "python-dotenv>=1,<2"]
 
 [project.optional-dependencies]
 dev = ["flet-cli>=1.0,<2", "flet-web>=1.0,<2"]

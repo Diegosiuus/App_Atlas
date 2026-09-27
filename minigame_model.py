@@ -330,6 +330,22 @@ def estimate_player_pace(
         and record.played_minutes is not None
         and record.played_minutes > 0
     ]
+    return _summarize_pace(rates)
+
+
+def estimate_saved_session_pace(
+    sessions: Iterable[dict[str, object]], game: str
+) -> dict[str, float | int] | None:
+    """Estimate a user's pace from their saved game sessions."""
+    rates = [
+        int(session["victories"]) / float(session["played_minutes"])
+        for session in sessions
+        if session["game"] == game and float(session["played_minutes"]) > 0
+    ]
+    return _summarize_pace(rates)
+
+
+def _summarize_pace(rates: Sequence[float]) -> dict[str, float | int] | None:
     if not rates:
         return None
     ordered = sorted(rates)

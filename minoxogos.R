@@ -1,7 +1,7 @@
 #### ANALISE DOS MINIXOGOS DO ATLAS ####
 ########################################
 
-setwd("C:/Users/suso2/OneDrive/Escritorio/Atlas")
+setwd("~/GitHub/App_Atlas")
 
 # ============================================================
 # 1. LIBRERIAS

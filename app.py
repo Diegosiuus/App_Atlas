@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
@@ -19,10 +20,14 @@ from minigame_model import (
     ACTIVE_GAMES,
     TARGET_POSITIONS,
     NORMAL_EVENT_WEEKDAYS,
+    estimate_saved_session_pace,
+    estimate_time_minutes,
+    infer_event_duration_minutes,
     is_last_saturday,
     load_records,
     predict_event,
 )
+from supabase_api import SupabaseConfig, SupabaseError
 
 
 INK = "#1F2A2E"
@@ -63,6 +68,18 @@ def _next_event_date(today: date | None = None) -> date:
     raise RuntimeError("No event date found in the next two weeks")
 
 
+def _previous_event_date(game: str, today: date | None = None) -> date:
+    start = today or date.today()
+    for offset in range(15):
+        candidate = start - timedelta(days=offset)
+        try:
+            infer_event_duration_minutes(candidate, game)
+            return candidate
+        except ValueError:
+            continue
+    raise RuntimeError("No recent event date found")
+
+
 def _section_heading(title: str, subtitle: str | None = None) -> ft.Control:
     controls: list[ft.Control] = [
         ft.Text(title, size=21, weight=ft.FontWeight.BOLD, color=INK),
@@ -98,6 +115,9 @@ def main(page: ft.Page) -> None:
     page.theme = ft.Theme(color_scheme_seed=TEAL, use_material3=True)
     page.bgcolor = CANVAS
     page.padding = 0
+    supabase = SupabaseConfig.from_environment()
+    session: dict[str, str] = {}
+    saved_game_sessions: list[dict] = []
     data_path = Path(__file__).resolve().with_name("registro_juegos.txt")
     try:
         records = load_records(data_path)
@@ -131,11 +151,263 @@ def main(page: ft.Page) -> None:
         options=[ft.DropdownOption(key=str(position), text=str(position)) for position in TARGET_POSITIONS],
         expand=True,
     )
-    player_field = ft.TextField(
-        label="Jugador (opcional, para estimar tiempo)",
-        hint_text="Debe coincidir con el nombre del histórico",
-    )
     game_feedback = ft.Column(spacing=10)
+    result_game_field = ft.Dropdown(
+        label="Minijuego",
+        value="Racer",
+        options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
+        expand=True,
+    )
+    result_date_field = ft.TextField(
+        label="Fecha del evento",
+        value=_previous_event_date("Racer").isoformat(),
+        expand=True,
+    )
+    result_wins_field = _number_field("Victorias")
+    result_position_field = _number_field("Puesto final")
+    result_minutes_field = _number_field("Minutos jugados", "30")
+    result_feedback = ft.Text("Inicia sesión para guardar resultados.", size=13, color=MUTED)
+    result_history = ft.Column(spacing=6)
+    email_field = ft.TextField(label="Correo electrónico", keyboard_type=ft.KeyboardType.EMAIL)
+    password_field = ft.TextField(label="Contraseña", password=True, can_reveal_password=True)
+    account_feedback = ft.Text(
+        "Configura Supabase en el archivo .env para habilitar tu cuenta."
+        if supabase is None
+        else "Inicia sesión o crea una cuenta para sincronizar tu perfil.",
+        size=13,
+        color=AMBER if supabase is None else MUTED,
+    )
+    sign_in_button = ft.Button("Iniciar sesión", icon=ft.Icons.LOGIN, disabled=supabase is None)
+    sign_up_button = ft.Button("Crear cuenta", icon=ft.Icons.PERSON_ADD, disabled=supabase is None)
+    save_profile_button = ft.Button("Guardar perfil", icon=ft.Icons.SAVE, disabled=True)
+    sign_out_button = ft.Button("Cerrar sesión", icon=ft.Icons.LOGOUT, disabled=True)
+
+    def profile_payload(user_id: str) -> dict:
+        counts = {
+            rarity: _parse_number(field.value or "0", field.label or rarity, integer=True)
+            for rarity, field in rarity_fields.items()
+        }
+        badges = _parse_number(badge_field.value or "0", "Insignias", integer=True)
+        normal_hours = _parse_number(normal_hours_field.value or "0", "Boost normal")
+        srb_hours = _parse_number(srb_hours_field.value or "0", "SRB activo")
+        if normal_hours > 24:
+            raise ValueError("Boost normal: el máximo es 24 horas al día.")
+        if srb_hours > 64:
+            raise ValueError("SRB activo: el máximo es 64 horas al mes.")
+        return {
+            "user_id": user_id,
+            "common_parcels": counts["common"],
+            "rare_parcels": counts["rare"],
+            "epic_parcels": counts["epic"],
+            "legendary_parcels": counts["legendary"],
+            "badge_count": badges,
+            "normal_boost_hours_per_day": normal_hours,
+            "srb_boost_hours_per_month": srb_hours,
+        }
+
+    def fill_profile(profile: dict | None) -> None:
+        profile = profile or {
+            "common_parcels": 0,
+            "rare_parcels": 0,
+            "epic_parcels": 0,
+            "legendary_parcels": 0,
+            "badge_count": 0,
+            "normal_boost_hours_per_day": 22,
+            "srb_boost_hours_per_month": 0,
+        }
+        rarity_fields["common"].value = str(profile["common_parcels"])
+        rarity_fields["rare"].value = str(profile["rare_parcels"])
+        rarity_fields["epic"].value = str(profile["epic_parcels"])
+        rarity_fields["legendary"].value = str(profile["legendary_parcels"])
+        badge_field.value = str(profile["badge_count"])
+        normal_hours_field.value = str(profile["normal_boost_hours_per_day"])
+        srb_hours_field.value = str(profile["srb_boost_hours_per_month"])
+
+    async def authenticate(create_account: bool) -> None:
+        if supabase is None:
+            return
+        email = (email_field.value or "").strip().lower()
+        password = password_field.value or ""
+        if not email or not password:
+            account_feedback.value = "Introduce tu correo y contraseña."
+            page.update()
+            return
+        account_feedback.value = "Conectando…"
+        page.update()
+        try:
+            response = await asyncio.to_thread(
+                supabase.sign_up if create_account else supabase.sign_in,
+                email,
+                password,
+            )
+            access_token = response.get("access_token")
+            user = response.get("user") or {}
+            if not access_token or not user.get("id"):
+                account_feedback.value = "Cuenta creada. Revisa tu correo y confirma la dirección antes de iniciar sesión."
+                page.update()
+                return
+            session["access_token"] = access_token
+            session["user_id"] = user["id"]
+            session["email"] = email
+            profile = await asyncio.to_thread(supabase.get_profile, user["id"], access_token)
+            fill_profile(profile)
+            if profile is None:
+                await asyncio.to_thread(supabase.save_profile, profile_payload(user["id"]), access_token)
+            try:
+                saved_game_sessions[:] = await asyncio.to_thread(
+                    supabase.get_game_sessions, user["id"], access_token
+                )
+                render_game_history()
+                result_feedback.value = f"{len(saved_game_sessions)} resultados guardados en tu cuenta."
+            except SupabaseError as exc:
+                saved_game_sessions.clear()
+                render_game_history()
+                result_feedback.value = (
+                    f"No se pudo cargar el historial: {exc}. "
+                    "Comprueba que ejecutaste la migración 0002_player_game_results.sql."
+                )
+            account_feedback.value = f"Sesión iniciada como {email}. Perfil sincronizado."
+            sign_in_button.disabled = True
+            sign_up_button.disabled = True
+            email_field.disabled = True
+            password_field.disabled = True
+            save_profile_button.disabled = False
+            sign_out_button.disabled = False
+            save_game_result_button.disabled = False
+        except (SupabaseError, ValueError) as exc:
+            account_feedback.value = str(exc)
+        page.update()
+
+    async def save_profile(e: ft.Event[ft.Button]) -> None:
+        if supabase is None or not session:
+            return
+        try:
+            profile = profile_payload(session["user_id"])
+            account_feedback.value = "Guardando perfil…"
+            page.update()
+            await asyncio.to_thread(supabase.save_profile, profile, session["access_token"])
+            account_feedback.value = "Perfil guardado en tu cuenta."
+        except (SupabaseError, ValueError) as exc:
+            account_feedback.value = str(exc)
+        page.update()
+
+    def sign_out(e: ft.Event[ft.Button]) -> None:
+        session.clear()
+        saved_game_sessions.clear()
+        render_game_history()
+        sign_in_button.disabled = supabase is None
+        sign_up_button.disabled = supabase is None
+        email_field.disabled = False
+        password_field.disabled = False
+        save_profile_button.disabled = True
+        sign_out_button.disabled = True
+        save_game_result_button.disabled = True
+        result_feedback.value = "Inicia sesión para guardar resultados."
+        account_feedback.value = "Sesión cerrada en este dispositivo."
+        page.update()
+
+    async def sign_in(e: ft.Event[ft.Button]) -> None:
+        await authenticate(False)
+
+    async def sign_up(e: ft.Event[ft.Button]) -> None:
+        await authenticate(True)
+
+    sign_in_button.on_click = sign_in
+    sign_up_button.on_click = sign_up
+    save_profile_button.on_click = save_profile
+    sign_out_button.on_click = sign_out
+
+    def render_game_history() -> None:
+        result_history.controls.clear()
+        if not session:
+            result_history.controls.append(
+                ft.Text("Inicia sesión para consultar tus partidas guardadas.", size=12, color=MUTED)
+            )
+            return
+        if not saved_game_sessions:
+            result_history.controls.append(
+                ft.Text("Todavía no hay resultados guardados.", size=12, color=MUTED)
+            )
+            return
+        for record in saved_game_sessions[:20]:
+            position = (
+                f" · puesto {record['final_position']}"
+                if record.get("final_position") is not None
+                else ""
+            )
+            result_history.controls.append(
+                ft.Row(
+                    controls=[
+                        ft.Text(
+                            f"{record['event_date']} · {record['game']}",
+                            color=INK,
+                            expand=True,
+                        ),
+                        ft.Text(
+                            f"{record['victories']} victorias · {record['played_minutes']:g} min{position}",
+                            color=MUTED,
+                            size=12,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                )
+            )
+
+    async def save_game_result(e: ft.Event[ft.Button]) -> None:
+        if supabase is None or not session:
+            result_feedback.value = "Inicia sesión antes de guardar una partida."
+            page.update()
+            return
+        try:
+            game = result_game_field.value or "Racer"
+            event_date = date.fromisoformat(result_date_field.value or "")
+            if event_date > date.today():
+                raise ValueError("La fecha no puede estar en el futuro.")
+            duration_minutes = infer_event_duration_minutes(event_date, game)
+            if not (result_wins_field.value or "").strip():
+                raise ValueError("Indica cuántas victorias conseguiste.")
+            victories = _parse_number(result_wins_field.value or "", "Victorias", integer=True)
+            played_minutes = _parse_number(result_minutes_field.value or "", "Minutos jugados")
+            if played_minutes <= 0 or played_minutes > duration_minutes:
+                raise ValueError(f"El tiempo debe ser mayor que 0 y no superar {duration_minutes} minutos.")
+            raw_position = (result_position_field.value or "").strip()
+            position = (
+                _parse_number(raw_position, "Puesto final", integer=True)
+                if raw_position
+                else None
+            )
+            if position is not None and not 1 <= position <= 1500:
+                raise ValueError("El puesto final debe estar entre 1 y 1500.")
+            record = {
+                "user_id": session["user_id"],
+                "game": game,
+                "event_date": event_date.isoformat(),
+                "victories": victories,
+                "final_position": position,
+                "played_minutes": played_minutes,
+            }
+            result_feedback.value = "Guardando resultado…"
+            page.update()
+            await asyncio.to_thread(
+                supabase.save_game_session, record, session["access_token"]
+            )
+            saved_game_sessions[:] = await asyncio.to_thread(
+                supabase.get_game_sessions,
+                session["user_id"],
+                session["access_token"],
+            )
+            render_game_history()
+            result_feedback.value = "Resultado guardado. Si repites evento y minijuego, se actualizará ese registro."
+        except (SupabaseError, ValueError) as exc:
+            result_feedback.value = str(exc)
+        page.update()
+
+    save_game_result_button = ft.Button(
+        "Guardar resultado",
+        icon=ft.Icons.SAVE,
+        disabled=True,
+        on_click=save_game_result,
+    )
 
     def income_result(e: ft.Event[ft.Button]) -> None:
         income_feedback.controls.clear()
@@ -255,8 +527,17 @@ def main(page: ft.Page) -> None:
                 records,
                 game_field.value or "Racer",
                 date_field.value or "",
-                player=(player_field.value or "").strip() or None,
             )
+            personal_pace = (
+                estimate_saved_session_pace(saved_game_sessions, game_field.value or "Racer")
+                if session
+                else None
+            )
+            if personal_pace:
+                for position, estimate in prediction["thresholds"].items():
+                    estimate["time"] = estimate_time_minutes(
+                        int(estimate["estimated_victories"]), personal_pace
+                    )
             pool = prediction["pool"]
             selected_position = int(target_field.value or "25")
             selected = prediction["thresholds"][selected_position]
@@ -354,9 +635,8 @@ def main(page: ft.Page) -> None:
             _section_heading("Minijuegos", "Victorias orientativas para alcanzar el puesto"),
             ft.Row(controls=[game_field, target_field], spacing=10),
             date_field,
-            player_field,
             ft.Text(
-                "La duración se infiere del calendario: sábados finales 1 h; resto de eventos 3 h.",
+                "El tiempo personal usa tus partidas guardadas en esta cuenta. La duración se infiere del calendario.",
                 size=12,
                 color=MUTED,
             ),
@@ -368,15 +648,54 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
 
-    active_view = 0
+    account_view = ft.Column(
+        controls=[
+            _section_heading("Mi cuenta", "Sincroniza tus datos de ingresos entre sesiones"),
+            account_feedback,
+            email_field,
+            password_field,
+            ft.Row(controls=[sign_in_button, sign_up_button], spacing=8),
+            ft.Row(controls=[save_profile_button, sign_out_button], spacing=8),
+            ft.Text(
+                "Se sincronizan tu perfil y tus resultados personales. El histórico general de predicciones sigue siendo local.",
+                size=12,
+                color=MUTED,
+            ),
+        ],
+        spacing=12,
+        scroll=ft.ScrollMode.AUTO,
+        expand=True,
+    )
+
+    render_game_history()
+    results_view = ft.Column(
+        controls=[
+            _section_heading("Resultados", "Guarda y consulta tus partidas"),
+            result_feedback,
+            ft.Row(controls=[result_game_field, result_date_field], spacing=10),
+            ft.Row(controls=[result_wins_field, result_position_field], spacing=10),
+            result_minutes_field,
+            ft.Text(
+                "Se permite una entrada por minijuego y fecha; si la vuelves a guardar, se actualiza.",
+                size=12,
+                color=MUTED,
+            ),
+            save_game_result_button,
+            _section_heading("Mis partidas"),
+            result_history,
+        ],
+        spacing=12,
+        scroll=ft.ScrollMode.AUTO,
+        expand=True,
+    )
+
     nav_buttons: list[ft.Button] = []
+    app_views = [income_view, minigame_view, account_view, results_view]
 
     def select_view(index: int) -> Callable[[ft.Event[ft.Button]], None]:
         def handler(e: ft.Event[ft.Button]) -> None:
-            nonlocal active_view
-            active_view = index
-            income_view.visible = index == 0
-            minigame_view.visible = index == 1
+            for view_index, view in enumerate(app_views):
+                view.visible = view_index == index
             for button_index, button in enumerate(nav_buttons):
                 button.style = ft.ButtonStyle(
                     bgcolor=TEAL if button_index == index else "transparent",
@@ -402,9 +721,25 @@ def main(page: ft.Page) -> None:
                 on_click=select_view(1),
                 expand=True,
             ),
+            ft.Button(
+                "Mi cuenta",
+                icon=ft.Icons.ACCOUNT_CIRCLE,
+                style=ft.ButtonStyle(bgcolor="transparent", color=INK),
+                on_click=select_view(2),
+                expand=True,
+            ),
+            ft.Button(
+                "Resultados",
+                icon=ft.Icons.HISTORY,
+                style=ft.ButtonStyle(bgcolor="transparent", color=INK),
+                on_click=select_view(3),
+                expand=True,
+            ),
         ]
     )
     minigame_view.visible = False
+    account_view.visible = False
+    results_view.visible = False
 
     page.add(
         ft.SafeArea(
@@ -424,18 +759,24 @@ def main(page: ft.Page) -> None:
                                     ],
                                     spacing=1,
                                 ),
-                                ft.Container(expand=True),
-                                ft.Text(f"{len(records)} datos", size=11, color=MUTED),
+                                ft.Container(expand=True)
+                                
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
                     ),
                     ft.Container(
-                        padding=ft.Padding.symmetric(horizontal=16, vertical=10),
-                        content=ft.Row(controls=nav_buttons, spacing=8),
+                        padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                        content=ft.Column(
+                            controls=[
+                                ft.Row(controls=nav_buttons[:2], spacing=8),
+                                ft.Row(controls=nav_buttons[2:], spacing=8),
+                            ],
+                            spacing=4,
+                        ),
                     ),
                     ft.Container(
-                        content=ft.Column(controls=[income_view, minigame_view], expand=True),
+                        content=ft.Column(controls=app_views, expand=True),
                         padding=ft.Padding.symmetric(horizontal=16, vertical=4),
                         expand=True,
                     ),
@@ -459,7 +800,7 @@ def _metric_row(label: str, value: str) -> ft.Control:
 
 def _time_text(value: object) -> ft.Control:
     if not isinstance(value, dict):
-        return ft.Text("Tiempo personal: sin sesiones históricas para este jugador y juego.", size=12, color=MUTED)
+        return ft.Text("Tiempo personal: inicia sesión y guarda partidas de este minijuego para estimarlo.", size=12, color=MUTED)
     return ft.Text(
         "Tiempo personal estimado: "
         f"{value['central_minutes']} min (rango {value['optimistic_minutes']}–{value['pessimistic_minutes']} min), "

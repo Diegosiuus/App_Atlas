@@ -13,6 +13,7 @@ from minigame_model import (
     TARGET_POSITIONS,
     backtest_by_event,
     estimate_victories_for_position,
+    estimate_saved_session_pace,
     predict_event,
 )
 
@@ -80,6 +81,18 @@ class AtlasIncomeTests(unittest.TestCase):
 
 
 class MinigameModelTests(unittest.TestCase):
+    def test_saved_session_pace_uses_only_the_selected_game(self):
+        pace = estimate_saved_session_pace(
+            [
+                {"game": "Racer", "victories": 20, "played_minutes": 10},
+                {"game": "Racer", "victories": 40, "played_minutes": 10},
+                {"game": "Golf", "victories": 100, "played_minutes": 1},
+            ],
+            "Racer",
+        )
+        self.assertEqual(pace["sample_sessions"], 2)
+        self.assertEqual(pace["median_victories_per_minute"], 3)
+
     def test_1500_prediction_uses_standard_median_for_even_history(self):
         records = []
         for day, wins in ((1, 10), (8, 20)):
