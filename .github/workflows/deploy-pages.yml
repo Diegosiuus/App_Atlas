@@ -37,6 +37,24 @@ jobs:
           --app-description "Calculadoras y predicciones para Atlas Earth"
           --pwa-background-color "#F2F6F5"
           --pwa-theme-color "#087F72"
+      - name: Set unique PWA manifest ID
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest_path = Path("dist/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          repository_name = os.environ["GITHUB_REPOSITORY"].rsplit("/", 1)[1]
+          manifest["id"] = f"/{repository_name}/atlas-planner-v2"
+          manifest_path.write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:

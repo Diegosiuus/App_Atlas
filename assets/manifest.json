@@ -1,6 +1,7 @@
 {
   "name": "Atlas Planner",
   "short_name": "Atlas Planner",
+  "id": "/App_Atlas/atlas-planner-v2",
   "description": "Estimaciones personales de ingresos y minijuegos de Atlas Earth.",
   "start_url": "/",
   "scope": "/",
