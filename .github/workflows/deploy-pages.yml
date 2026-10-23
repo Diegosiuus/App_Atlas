@@ -49,7 +49,10 @@ jobs:
           manifest_path = Path("dist/manifest.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           repository_name = os.environ["GITHUB_REPOSITORY"].rsplit("/", 1)[1]
-          manifest["id"] = f"/{repository_name}/atlas-planner-v2"
+          project_path = f"/{repository_name}/"
+          manifest["id"] = f"{project_path}atlas-planner-v3"
+          manifest["start_url"] = project_path
+          manifest["scope"] = project_path
           manifest_path.write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
               encoding="utf-8",

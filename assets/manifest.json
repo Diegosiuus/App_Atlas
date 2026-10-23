@@ -1,10 +1,10 @@
 {
   "name": "Atlas Planner",
   "short_name": "Atlas Planner",
-  "id": "/App_Atlas/atlas-planner-v2",
+  "id": "/App_Atlas/atlas-planner-v3",
   "description": "Estimaciones personales de ingresos y minijuegos de Atlas Earth.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "/App_Atlas/",
+  "scope": "/App_Atlas/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F2F6F5",
