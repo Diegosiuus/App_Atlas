@@ -18,6 +18,8 @@ El usuario autorizó revisar y corregir el repositorio tomando este handoff como
 
 Verificación local: 28 pruebas unitarias, compilación Python y `flet publish` con Python 3.12 correctos; se comprobó que el archivo privado y compilaciones anteriores no aparecen en el paquete limpio. No se ha hecho push ni se ha verificado el sitio público, la configuración del panel de Supabase, ni el comportamiento real del token tras recargar en móvil. El refresh token se guarda en local storage y no ofrece la misma protección que una sesión HttpOnly de servidor.
 
+El primer workflow de GitHub compiló, pero falló al subir el artefacto: el `distpath` se resolvía dentro de `src`, mientras el uploader esperaba `dist` en la raíz. Se corrigió a `../dist`; falta subir ese cambio y comprobar otra ejecución.
+
 ------------------------------------------------------------------------
 
 ## 1. Resumen ejecutivo

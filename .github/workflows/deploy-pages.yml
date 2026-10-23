@@ -31,7 +31,7 @@ jobs:
           --base-url "/${{ github.event.repository.name }}/"
           --route-url-strategy hash
           --assets assets
-          --distpath dist
+          --distpath ../dist
           --app-name "Atlas Planner"
           --app-short-name "Atlas"
           --app-description "Calculadoras y predicciones para Atlas Earth"
