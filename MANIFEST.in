@@ -1,0 +1,2 @@
+exclude data/private/registro_juegos.txt
+global-exclude *.py[cod]

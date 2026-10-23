@@ -144,7 +144,7 @@ class MinigameModelTests(unittest.TestCase):
         ]
         self.assertEqual(wins, sorted(wins, reverse=True))
         self.assertTrue(prediction["pool"]["duration_mismatch"])
-        self.assertEqual(prediction["pool"]["confidence"], "low")
+        self.assertEqual(prediction["pool"]["confidence"], "baja")
 
     def test_backtest_1500_matches_its_historical_median_baseline(self):
         result = backtest_by_event(make_records(), min_prior_events=1)

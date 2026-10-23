@@ -1,4 +1,5 @@
 import json
+import types
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -33,19 +34,71 @@ class SupabaseApiTests(unittest.TestCase):
 
     @patch("atlas_planner.supabase_api.urlopen")
     def test_profile_save_upserts_with_user_token(self, mocked_urlopen):
-        response = BytesIO(b"")
+        saved = {"user_id": "user-1", "username": "atlas_user", "common_parcels": 12}
+        response = BytesIO(json.dumps([saved]).encode())
         response.__enter__ = lambda obj: obj
         response.__exit__ = lambda *args: None
         mocked_urlopen.return_value = response
-        profile = {"user_id": "user-1", "common_parcels": 12}
+        profile = {"user_id": "user-1", "username": "atlas_user", "common_parcels": 12}
 
-        self.config.save_profile(profile, "user-access-token")
+        result = self.config.save_profile(profile, "user-access-token")
 
+        self.assertEqual(result, saved)
         request = mocked_urlopen.call_args.args[0]
         self.assertEqual(request.get_method(), "POST")
-        self.assertEqual(request.get_header("Prefer"), "resolution=merge-duplicates,return=minimal")
+        self.assertEqual(request.get_header("Prefer"), "resolution=merge-duplicates,return=representation")
         self.assertEqual(json.loads(request.data), profile)
         self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
+
+    @patch("atlas_planner.supabase_api.urlopen")
+    def test_refresh_session_uses_refresh_grant(self, mocked_urlopen):
+        response = BytesIO(b'{"access_token":"new-access","refresh_token":"rotated-refresh"}')
+        response.__enter__ = lambda obj: obj
+        response.__exit__ = lambda *args: None
+        mocked_urlopen.return_value = response
+
+        result = self.config.refresh_session("old-refresh")
+
+        request = mocked_urlopen.call_args.args[0]
+        self.assertIn("grant_type=refresh_token", request.full_url)
+        self.assertEqual(json.loads(request.data), {"refresh_token": "old-refresh"})
+        self.assertEqual(result["refresh_token"], "rotated-refresh")
+
+    @patch("atlas_planner.supabase_api.sys.platform", "emscripten")
+    def test_browser_auth_uses_fetch_with_javascript_options(self):
+        calls = []
+
+        class Response:
+            status = 200
+
+            async def text(self):
+                return '{"access_token":"access","user":{"id":"user-1"}}'
+
+        async def fetch(url, options):
+            calls.append((url, options))
+            return Response()
+
+        js_module = types.ModuleType("js")
+        js_module.fetch = fetch
+        pyodide_module = types.ModuleType("pyodide")
+        pyodide_module.__path__ = []
+        ffi_module = types.ModuleType("pyodide.ffi")
+        ffi_module.to_js = lambda value: value
+
+        with patch.dict(
+            sys.modules,
+            {"js": js_module, "pyodide": pyodide_module, "pyodide.ffi": ffi_module},
+        ):
+            result = self.config.sign_in("user@example.com", "password")
+
+        self.assertEqual(result["access_token"], "access")
+        url, options = calls[0]
+        self.assertIn("grant_type=password", url)
+        self.assertIn("apikey=sb_publishable_test", url)
+        self.assertEqual(options["method"], "POST")
+        self.assertEqual(json.loads(options["body"]), {
+            "email": "user@example.com", "password": "password"
+        })
 
     @patch("atlas_planner.supabase_api.urlopen")
     def test_signup_sends_explicit_email_redirect(self, mocked_urlopen):

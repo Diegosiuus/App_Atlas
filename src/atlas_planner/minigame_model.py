@@ -65,13 +65,13 @@ def infer_event_duration_minutes(value: date | str, game: str) -> int:
     if game not in ACTIVE_GAMES:
         raise ValueError(f"unknown active game: {game}")
     if game == "Fishing(V)" and not is_last_saturday(event_date):
-        raise ValueError("Fishing(V) is scheduled for the last Saturday of the month")
+        raise ValueError("Fishing (V) solo se juega el último sábado del mes.")
     if is_last_saturday(event_date):
         if game == "Fishing":
             raise ValueError("Los sábados se juega Fishing(V), no el Fishing normal")
         return 60
     if event_date.weekday() not in NORMAL_EVENT_WEEKDAYS:
-        raise ValueError("regular minigames are scheduled Monday, Tuesday, Thursday, or Sunday")
+        raise ValueError("Los minijuegos regulares se juegan lunes, martes, jueves y domingo.")
     return 180
 
 
@@ -181,10 +181,10 @@ def _duration_subset(
 
 def _confidence(sample_count: int, duration_mismatch: bool) -> str:
     if duration_mismatch or sample_count < 5:
-        return "low"
+        return "baja"
     if sample_count < 12:
-        return "medium"
-    return "higher"
+        return "media"
+    return "alta"
 
 
 def estimate_event_pool(
