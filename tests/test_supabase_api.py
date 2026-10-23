@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import types
 import unittest
 from io import BytesIO
@@ -17,6 +19,32 @@ class SupabaseApiTests(unittest.TestCase):
         self.config = SupabaseConfig(
             "https://example.supabase.co", "sb_publishable_test"
         )
+
+    def test_module_imports_without_python_dotenv(self):
+        script = """
+import builtins
+real_import = builtins.__import__
+def import_without_dotenv(name, *args, **kwargs):
+    if name == 'dotenv':
+        raise ImportError('simulated missing browser dependency')
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = import_without_dotenv
+from atlas_planner.supabase_api import SupabaseConfig
+assert SupabaseConfig
+"""
+        env = os.environ.copy()
+        source_path = str(Path(__file__).resolve().parents[1] / "src")
+        env["PYTHONPATH"] = os.pathsep.join(
+            filter(None, (source_path, env.get("PYTHONPATH")))
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     @patch("atlas_planner.supabase_api.urlopen")
     def test_profile_read_uses_user_token_and_rls_filter(self, mocked_urlopen):

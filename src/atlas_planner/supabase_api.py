@@ -11,7 +11,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # python-dotenv is unavailable in the Pyodide browser runtime.
+    def load_dotenv(*args, **kwargs) -> bool:
+        return False
 
 
 PROFILE_COLUMNS = (
