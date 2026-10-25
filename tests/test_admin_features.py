@@ -1,5 +1,6 @@
 import sys
 import unittest
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from atlas_planner.app import (
     _admin_import_rows,
+    _build_admin_event_payload,
+    _build_admin_observation_payload,
     _build_profile_payload,
     _load_local_records,
     _local_registry_path,
@@ -17,6 +20,37 @@ from atlas_planner.supabase_api import SupabaseConfig
 
 
 class AdminImportTests(unittest.TestCase):
+    def test_admin_event_payload_contains_pool_and_all_aggregate_tiers(self):
+        payload = _build_admin_event_payload(
+            "Racer",
+            date(2026, 9, 21),
+            "1000",
+            {(4, 25): "100", (26, 50): "100", (51, 100): "200", (101, 500): "300", (501, 1500): "200"},
+        )
+
+        self.assertEqual(payload["total_coins"], 1000)
+        self.assertEqual(payload["duration_minutes"], 720)
+        self.assertEqual(len(payload["tiers"]), 5)
+        self.assertEqual(payload["tiers"][0]["coins_awarded"], 100)
+
+    def test_admin_event_rejects_tier_sum_over_pool(self):
+        with self.assertRaisesRegex(ValueError, "no puede superar"):
+            _build_admin_event_payload(
+                "Racer", date(2026, 9, 21), "100",
+                {bracket: "30" for bracket in ((4, 25), (26, 50), (51, 100), (101, 500), (501, 1500))},
+            )
+
+    def test_admin_observation_fields_keep_individual_coins_separate_and_optional(self):
+        observation = _build_admin_observation_payload("25", "123", "", "medio", "")
+
+        self.assertEqual(observation["position"], 25)
+        self.assertIsNone(observation["losses"])
+        self.assertIsNone(observation["coins_earned"])
+
+    def test_admin_observation_requires_victories(self):
+        with self.assertRaisesRegex(ValueError, "victorias"):
+            _build_admin_observation_payload("25", "", "", None, "")
+
     def test_private_registry_is_outside_python_package(self):
         registry = _local_registry_path()
 

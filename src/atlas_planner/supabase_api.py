@@ -343,6 +343,61 @@ class SupabaseConfig:
             access_token=access_token,
         )
 
+    def save_admin_event_data(self, event: dict, access_token: str) -> None:
+        self._request(
+            "/rest/v1/rpc/admin_save_event_data", method="POST",
+            payload={
+                "p_game": event["game"],
+                "p_event_date": event["event_date"],
+                "p_duration_minutes": event["duration_minutes"],
+                "p_total_coins": event["total_coins"],
+                "p_tiers": event["tiers"],
+            },
+            access_token=access_token,
+        )
+
+    def get_admin_event_data(self, game: str, event_date: str, access_token: str) -> dict | None:
+        query = urlencode({
+            "select": "id,total_coins,duration_minutes,event_format,archived",
+            "game": f"eq.{game}",
+            "event_date": f"eq.{event_date}",
+            "limit": "1",
+        })
+        rows = self._request(
+            f"/rest/v1/minigame_events?{query}", access_token=access_token
+        )
+        if not isinstance(rows, list) or not rows:
+            return None
+        event = rows[0]
+        tiers = self._request(
+            "/rest/v1/minigame_event_tier_awards?"
+            + urlencode({
+                "select": "position_min,position_max,coins_awarded",
+                "event_id": f"eq.{event['id']}",
+                "order": "position_min.asc",
+            }),
+            access_token=access_token,
+        )
+        event["tiers"] = tiers if isinstance(tiers, list) else []
+        return event
+
+    def add_admin_observation(
+        self, game: str, event_date: str, observation: dict, access_token: str
+    ) -> None:
+        self._request(
+            "/rest/v1/rpc/admin_add_observation", method="POST",
+            payload={
+                "p_game": game,
+                "p_event_date": event_date,
+                "p_position": observation["position"],
+                "p_victories": observation["victories"],
+                "p_losses": observation["losses"],
+                "p_activity_phase": observation["activity_phase"],
+                "p_coins_earned": observation["coins_earned"],
+            },
+            access_token=access_token,
+        )
+
     def import_observations(self, rows: list[dict], access_token: str) -> int:
         imported = self._request(
             "/rest/v1/rpc/admin_import_model_rows", method="POST",

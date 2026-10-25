@@ -25,7 +25,6 @@ from .minigame_model import (
     TARGET_POSITIONS,
     NORMAL_EVENT_WEEKDAYS,
     infer_event_duration_minutes,
-    is_last_saturday,
     load_records,
     predict_event,
 )
@@ -40,6 +39,8 @@ TEAL = "#087F72"
 AMBER = "#C77B14"
 RED = "#A83B3B"
 BORDER = "#DCE5E2"
+APP_NAME = "Atlas Earth Calc"
+PRIZE_TIERS = ((4, 25), (26, 50), (51, 100), (101, 500), (501, 1500))
 
 
 def _parse_number(value: str, label: str, integer: bool = False) -> int | float:
@@ -59,6 +60,57 @@ def _parse_number(value: str, label: str, integer: bool = False) -> int | float:
 
 def _money(value: float | int) -> str:
     return f"${value:,.2f}"
+
+
+def _build_admin_event_payload(
+    game: str, event_date: date, total_coins: str, tier_values: dict[tuple[int, int], str]
+) -> dict:
+    expected_duration = infer_event_duration_minutes(event_date, game)
+    if event_date > date.today():
+        raise ValueError("La fecha del evento no puede ser futura.")
+    pool = _parse_number(total_coins, "Bolsa total", integer=True)
+    if pool <= 0:
+        raise ValueError("La bolsa total debe ser mayor que cero.")
+    tiers = []
+    for minimum, maximum in PRIZE_TIERS:
+        raw_value = (tier_values.get((minimum, maximum)) or "").strip()
+        if not raw_value:
+            raise ValueError(f"Completa las monedas del tramo {minimum}–{maximum}.")
+        amount = _parse_number(raw_value, f"Monedas del tramo {minimum}–{maximum}", integer=True)
+        tiers.append({"position_min": minimum, "position_max": maximum, "coins_awarded": amount})
+    if sum(item["coins_awarded"] for item in tiers) > pool:
+        raise ValueError("La suma de los tramos no puede superar la bolsa total del evento.")
+    return {
+        "game": game,
+        "event_date": event_date.isoformat(),
+        "duration_minutes": expected_duration,
+        "total_coins": pool,
+        "tiers": tiers,
+    }
+
+
+def _build_admin_observation_payload(
+    position: str, victories: str, losses: str, activity_phase: str | None, coins_earned: str
+) -> dict:
+    if not victories.strip():
+        raise ValueError("Indica cuántas victorias tuvo el jugador.")
+    rank = _parse_number(position, "Puesto", integer=True)
+    wins = _parse_number(victories, "Victorias", integer=True)
+    raw_losses = losses.strip()
+    loss_count = _parse_number(raw_losses, "Derrotas", integer=True) if raw_losses else None
+    if not 4 <= rank <= 1500:
+        raise ValueError("El puesto debe estar entre 4 y 1500.")
+    if loss_count is not None and loss_count > 10:
+        raise ValueError("Las derrotas deben estar entre 0 y 10.")
+    raw_coins = coins_earned.strip()
+    earned = _parse_number(raw_coins, "Monedas ganadas", integer=True) if raw_coins else None
+    return {
+        "position": rank,
+        "victories": wins,
+        "losses": loss_count,
+        "activity_phase": activity_phase or None,
+        "coins_earned": earned,
+    }
 
 
 def _load_local_records(file_path: str | Path) -> list[GameRecord]:
@@ -261,7 +313,7 @@ def _number_field(label: str, value: str = "0") -> ft.TextField:
 
 
 def main(page: ft.Page) -> None:
-    page.title = "Atlas Planner"
+    page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.LIGHT
     page.theme = ft.Theme(color_scheme_seed=TEAL, use_material3=True)
     page.bgcolor = CANVAS
@@ -313,7 +365,6 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
     game_feedback = ft.Column(spacing=10)
-    training_feedback = ft.Text("Las predicciones usarán el histórico local y el compartido aprobado.", size=12, color=MUTED)
     result_game_field = ft.Dropdown(
         label="Minijuego",
         value="Racer",
@@ -375,10 +426,32 @@ def main(page: ft.Page) -> None:
     admin_nav_button: ft.Button
     admin_feedback = ft.Text(size=12, color=MUTED)
     pending_results_view = ft.Column(spacing=10)
-    admin_import_field = ft.TextField(
-        label="Filas del registro", multiline=True, min_lines=7, max_lines=14,
-        hint_text="Juego Fecha Posición Victorias MonedasTotales MonedasGanadas Duración(min) Derrotas Franja",
+    admin_game_field = ft.Dropdown(
+        label="Minijuego", value="Racer",
+        options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
+        expand=True,
     )
+    admin_event_date = _previous_event_date("Racer")
+    admin_event_date_button = ft.Button(
+        admin_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
+    )
+    admin_total_coins_field = _number_field("Bolsa total del evento", "")
+    admin_tier_fields = {
+        bracket: _number_field(f"Monedas agregadas · puestos {bracket[0]}–{bracket[1]}", "")
+        for bracket in PRIZE_TIERS
+    }
+    admin_observation_position = _number_field("Puesto (4–1500)", "")
+    admin_observation_wins = _number_field("Victorias", "")
+    admin_observation_losses = _number_field("Derrotas (opcional)", "")
+    admin_observation_phase = ft.Dropdown(
+        label="Franja (opcional)", value=None,
+        options=[
+            ft.DropdownOption(key="inicio", text="Inicio (0–4 h)"),
+            ft.DropdownOption(key="medio", text="Tramo medio (4–8 h)"),
+            ft.DropdownOption(key="final", text="Tramo final (8–12 h)"),
+        ], expand=True,
+    )
+    admin_observation_coins = _number_field("Monedas individuales (opcional)", "")
 
     prediction_date_picker = ft.DatePicker(
         value=prediction_event_date,
@@ -395,6 +468,15 @@ def main(page: ft.Page) -> None:
         last_date=date.today(),
         locale=ft.Locale("es", "ES"),
         help_text="Elige la fecha de la partida",
+        cancel_text="Cancelar",
+        confirm_text="Aceptar",
+    )
+    admin_event_date_picker = ft.DatePicker(
+        value=admin_event_date,
+        first_date=date(2020, 1, 1),
+        last_date=date.today(),
+        locale=ft.Locale("es", "ES"),
+        help_text="Elige la fecha del evento",
         cancel_text="Cancelar",
         confirm_text="Aceptar",
     )
@@ -428,6 +510,41 @@ def main(page: ft.Page) -> None:
     prediction_date_picker.on_change = lambda e: update_selected_date(e, for_result=False)
     result_date_picker.on_change = lambda e: update_selected_date(e, for_result=True)
 
+    async def update_admin_event_date(e: ft.Event[ft.DatePicker]) -> None:
+        nonlocal admin_event_date
+        selected = e.control.value
+        if selected is None:
+            return
+        if isinstance(selected, datetime):
+            selected = selected.date()
+        try:
+            infer_event_duration_minutes(selected, admin_game_field.value or "Racer")
+        except ValueError as exc:
+            admin_feedback.value = str(exc)
+            admin_feedback.color = RED
+        else:
+            admin_event_date = selected
+            admin_event_date_button.content = selected.strftime("%d/%m/%Y")
+            admin_feedback.value = ""
+            admin_feedback.color = MUTED
+            await load_admin_event_data()
+        page.update()
+
+    admin_event_date_picker.on_change = update_admin_event_date
+
+    async def admin_game_changed(e: ft.Event[ft.Dropdown]) -> None:
+        game = admin_game_field.value or "Racer"
+        try:
+            infer_event_duration_minutes(admin_event_date, game)
+        except ValueError as exc:
+            admin_feedback.value = str(exc)
+            admin_feedback.color = RED
+            page.update()
+            return
+        await load_admin_event_data()
+
+    admin_game_field.on_change = admin_game_changed
+
     def open_prediction_calendar(e: ft.Event[ft.Button]) -> None:
         prediction_date_picker.value = prediction_event_date
         page.show_dialog(prediction_date_picker)
@@ -438,6 +555,12 @@ def main(page: ft.Page) -> None:
 
     date_field.on_click = open_prediction_calendar
     result_date_field.on_click = open_result_calendar
+
+    def open_admin_event_calendar(e: ft.Event[ft.Button]) -> None:
+        admin_event_date_picker.value = admin_event_date
+        page.show_dialog(admin_event_date_picker)
+
+    admin_event_date_button.on_click = open_admin_event_calendar
 
     def profile_payload(user_id: str) -> dict:
         counts = {
@@ -491,15 +614,9 @@ def main(page: ft.Page) -> None:
                     unique_records.append(record)
                     seen.add(key)
             records[:] = unique_records
-            training_feedback.value = (
-                f"Histórico para predicciones: {len(records)} observaciones locales y compartidas aprobadas."
-            )
-            training_feedback.color = MUTED
             return True
         except SupabaseError as exc:
             records[:] = local_records
-            training_feedback.value = f"No se pudo cargar el histórico compartido; se usa el local. {exc}"
-            training_feedback.color = AMBER
             return False
 
     async def establish_session(response: dict, email_hint: str = "") -> None:
@@ -576,6 +693,7 @@ def main(page: ft.Page) -> None:
         page.clean()
         page.add(app_root)
         if session["is_admin"] == "true":
+            await load_admin_event_data()
             await reload_pending_results()
 
     async def authenticate(create_account: bool) -> None:
@@ -1009,12 +1127,6 @@ def main(page: ft.Page) -> None:
             ft.Row(controls=[game_field, target_field], spacing=10),
             ft.Row(controls=[ft.Text("Fecha del evento", expand=True), date_field]),
             prediction_date_feedback,
-            ft.Text(
-                "Torneos regulares de 12 h. Los eventos del último sábado se conservan como histórico, pero no se registran ni predicen.",
-                size=12,
-                color=MUTED,
-            ),
-            training_feedback,
             ft.Button("Calcular predicción", icon=ft.Icons.INSIGHTS, on_click=game_result),
             game_feedback,
         ],
@@ -1056,12 +1168,6 @@ def main(page: ft.Page) -> None:
             result_date_feedback,
             ft.Row(controls=[result_wins_field, result_position_field], spacing=10),
             ft.Row(controls=[result_losses_field, result_phase_field], spacing=10),
-            ft.Text("Las derrotas y la franja son experimentales y no alteran aún los pronósticos.", size=12, color=MUTED),
-            ft.Text(
-                "Se permite una entrada por minijuego y fecha; si la vuelves a guardar, se actualiza.",
-                size=12,
-                color=MUTED,
-            ),
             save_game_result_button,
             _section_heading("Mis partidas"),
             result_history,
@@ -1083,8 +1189,15 @@ def main(page: ft.Page) -> None:
                 pending_results_view.controls.append(
                     ft.Text("No hay resultados pendientes de revisión.", size=13, color=MUTED)
                 )
+            grouped: dict[tuple[str, str], list[dict]] = {}
             for item in pending:
-                pending_results_view.controls.append(make_pending_result(item))
+                grouped.setdefault((str(item["event_date"]), str(item["game"])), []).append(item)
+            for (event_date, game), items in grouped.items():
+                parsed_date = date.fromisoformat(event_date)
+                pending_results_view.controls.append(
+                    _section_heading(f"{game} · {parsed_date:%d/%m/%Y}")
+                )
+                pending_results_view.controls.extend(make_pending_result(item) for item in items)
             admin_feedback.value = f"{len(pending)} resultados pendientes."
             admin_feedback.color = MUTED
         except SupabaseError as exc:
@@ -1092,100 +1205,98 @@ def main(page: ft.Page) -> None:
             admin_feedback.color = RED
         page.update()
 
-    async def submit_admin_import(rows: list[dict], label: str) -> None:
+    async def load_admin_event_data() -> None:
         if not session or session.get("is_admin") != "true":
             return
-        if len(rows) > 5000:
-            admin_feedback.value = "La carga no puede superar 5000 observaciones."
-            admin_feedback.color = RED
-            page.update()
-            return
-        seen_samples: set[tuple[str, str, int]] = set()
-        event_metadata: dict[tuple[str, str], tuple[int, int]] = {}
-        for row in rows:
-            sample_key = (row["game"], row["event_date"], int(row["position"]))
-            if sample_key in seen_samples:
-                admin_feedback.value = f"Hay una posición duplicada en {row['game']} el {row['event_date']}."
-                admin_feedback.color = RED
-                page.update()
-                return
-            seen_samples.add(sample_key)
-            event_key = sample_key[:2]
-            metadata = (int(row["duration_minutes"]), int(row["total_coins"]))
-            if event_key in event_metadata and event_metadata[event_key] != metadata:
-                admin_feedback.value = f"Duración o bolsa inconsistente en {row['game']} el {row['event_date']}."
-                admin_feedback.color = RED
-                page.update()
-                return
-            event_metadata[event_key] = metadata
-        admin_feedback.value = f"Importando {len(rows)} observaciones..."
-        admin_feedback.color = MUTED
-        page.update()
+        for field in (admin_total_coins_field, *admin_tier_fields.values()):
+            field.value = ""
         try:
-            inserted = await asyncio.to_thread(
-                supabase.import_observations, rows, session["access_token"]
+            event = await asyncio.to_thread(
+                supabase.get_admin_event_data,
+                admin_game_field.value or "Racer",
+                admin_event_date.isoformat(),
+                session["access_token"],
             )
-            admin_import_field.value = ""
+            if event and event.get("event_format") == "regular_tournament" and not event.get("archived"):
+                admin_total_coins_field.value = str(event["total_coins"])
+                for tier in event.get("tiers", []):
+                    bracket = (int(tier["position_min"]), int(tier["position_max"]))
+                    if bracket in admin_tier_fields:
+                        admin_tier_fields[bracket].value = str(tier["coins_awarded"])
+                admin_feedback.value = "Datos existentes del evento cargados."
+            else:
+                admin_feedback.value = "Evento nuevo."
+            admin_feedback.color = MUTED
+        except (SupabaseError, KeyError, TypeError, ValueError) as exc:
+            admin_feedback.value = f"No se pudieron cargar los datos del evento: {exc}"
+            admin_feedback.color = RED
+        page.update()
+
+    async def save_admin_event(e: ft.Event[ft.Button]) -> None:
+        if not session or session.get("is_admin") != "true":
+            return
+        try:
+            payload = _build_admin_event_payload(
+                admin_game_field.value or "Racer",
+                admin_event_date,
+                admin_total_coins_field.value or "",
+                {bracket: field.value or "" for bracket, field in admin_tier_fields.items()},
+            )
+            await asyncio.to_thread(
+                supabase.save_admin_event_data, payload, session["access_token"]
+            )
+            admin_feedback.value = "Evento y premios por tramo guardados."
+            admin_feedback.color = TEAL
+            await reload_pending_results()
+        except (SupabaseError, ValueError) as exc:
+            admin_feedback.value = str(exc)
+            admin_feedback.color = RED
+        page.update()
+
+    async def add_admin_observation(e: ft.Event[ft.Button]) -> None:
+        if not session or session.get("is_admin") != "true":
+            return
+        try:
+            game = admin_game_field.value or "Racer"
+            infer_event_duration_minutes(admin_event_date, game)
+            observation = _build_admin_observation_payload(
+                admin_observation_position.value or "",
+                admin_observation_wins.value or "",
+                admin_observation_losses.value or "",
+                admin_observation_phase.value,
+                admin_observation_coins.value or "",
+            )
+            await asyncio.to_thread(
+                supabase.add_admin_observation,
+                game,
+                admin_event_date.isoformat(),
+                observation,
+                session["access_token"],
+            )
+            for field in (
+                admin_observation_position, admin_observation_wins,
+                admin_observation_losses, admin_observation_coins,
+            ):
+                field.value = ""
+            admin_observation_phase.value = None
             await refresh_training_records()
-            admin_feedback.value = f"{label}: {inserted} nuevas; {len(rows) - inserted} ya existían."
+            admin_feedback.value = "Observación anónima añadida al evento."
             admin_feedback.color = TEAL
         except (SupabaseError, ValueError) as exc:
             admin_feedback.value = str(exc)
             admin_feedback.color = RED
         page.update()
 
-    async def import_pasted_observations(e: ft.Event[ft.Button]) -> None:
-        try:
-            await submit_admin_import(_admin_import_rows(admin_import_field.value or ""), "Importación completada")
-        except ValueError as exc:
-            admin_feedback.value = str(exc)
-            admin_feedback.color = RED
-            page.update()
-
-    async def import_local_observations(e: ft.Event[ft.Button]) -> None:
-        candidates = [
-            item for item in local_records
-            if item.duration_minutes == 720 and not is_last_saturday(item.event_date)
-        ]
-        if not candidates:
-            admin_feedback.value = "El registro local no contiene observaciones regulares nuevas de 12 h."
-            admin_feedback.color = RED
-            page.update()
-            return
-        rows = [
-            {
-                "game": item.game,
-                "event_date": item.event_date.isoformat(),
-                "position": item.position,
-                "victories": item.victories,
-                "total_coins": item.total_coins,
-                "coins_earned": item.coins_earned,
-                "duration_minutes": item.duration_minutes,
-            }
-            for item in candidates
-        ]
-        await submit_admin_import(rows, "Histórico local anonimizado")
-
     async def refresh_admin(e: ft.Event[ft.Button]) -> None:
         await reload_pending_results()
 
-    def review_action(
-        item: dict,
-        approve: bool,
-        pool_field: ft.TextField,
-        duration_field: ft.Dropdown,
-        note_field: ft.TextField,
-    ) -> Callable[[ft.Event[ft.Button]], object]:
+    def review_action(item: dict, approve: bool, note_field: ft.TextField) -> Callable[[ft.Event[ft.Button]], object]:
         async def handler(e: ft.Event[ft.Button]) -> None:
             if not session or session.get("is_admin") != "true":
                 return
             try:
-                total_coins = (
-                    _parse_number(pool_field.value or "", "Bolsa total", integer=True)
-                    if approve
-                    else None
-                )
-                duration = int(duration_field.value) if approve else None
+                total_coins = int(item["total_coins"]) if approve else None
+                duration = 720 if approve else None
                 await asyncio.to_thread(
                     supabase.review_result,
                     int(item["id"]), approve, total_coins, duration,
@@ -1204,14 +1315,6 @@ def main(page: ft.Page) -> None:
         return handler
 
     def make_pending_result(item: dict) -> ft.Control:
-        pool_field = _number_field("Bolsa total de monedas")
-        event_date = date.fromisoformat(str(item["event_date"]))
-        duration_field = ft.Dropdown(
-            label="Duración del evento",
-            value="720",
-            options=[ft.DropdownOption(key="720", text="12 h")],
-            expand=True,
-        )
         note_field = ft.TextField(label="Nota de revisión (opcional)", multiline=True, min_lines=1, max_lines=3)
         identity = item.get("username") or "Usuario"
         position = item.get("final_position")
@@ -1219,20 +1322,23 @@ def main(page: ft.Page) -> None:
         return _panel(
             ft.Column(
                 controls=[
-                    ft.Text(f"{event_date:%d/%m/%Y} · {item['game']} · {identity}", weight=ft.FontWeight.BOLD, color=INK),
+                    ft.Text(identity, weight=ft.FontWeight.BOLD, color=INK),
                     ft.Text(f"{rank_label} · {item['victories']} victorias · "
                             f"{item.get('losses') if item.get('losses') is not None else 'derrotas N/D'} derrotas", size=13, color=MUTED),
-                    ft.Row(controls=[pool_field, duration_field], spacing=8),
+                    ft.Text(
+                        "Evento completo" if item.get("event_ready") else "Guarda antes la bolsa y los cinco tramos del evento.",
+                        size=12, color=TEAL if item.get("event_ready") else AMBER,
+                    ),
                     note_field,
                     ft.Row(
                         controls=[
                             ft.Button(
                                 "Aprobar",
                                 icon=ft.Icons.CHECK,
-                                disabled=position is None or not 4 <= int(position) <= 1500,
-                                on_click=review_action(item, True, pool_field, duration_field, note_field),
+                                disabled=(position is None or not 4 <= int(position) <= 1500 or not item.get("event_ready")),
+                                on_click=review_action(item, True, note_field),
                             ),
-                            ft.Button("Rechazar", icon=ft.Icons.CLOSE, on_click=review_action(item, False, pool_field, duration_field, note_field)),
+                            ft.Button("Rechazar", icon=ft.Icons.CLOSE, on_click=review_action(item, False, note_field)),
                         ],
                         spacing=8,
                     ),
@@ -1243,31 +1349,26 @@ def main(page: ft.Page) -> None:
 
     admin_view = ft.Column(
         controls=[
-            _section_heading("Administración", "Moderación y datos anónimos de entrenamiento"),
+            _section_heading("Administración"),
             admin_feedback,
+            _section_heading("Datos del evento", "La asignación por tramo es el total de monedas de todos los jugadores de ese rango."),
+            ft.Row(controls=[admin_game_field, ft.Column(controls=[ft.Text("Fecha del evento", size=12, color=MUTED), admin_event_date_button], spacing=2)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.END),
+            admin_total_coins_field,
+            *[admin_tier_fields[bracket] for bracket in PRIZE_TIERS],
+            ft.Button("Guardar evento", icon=ft.Icons.SAVE, on_click=save_admin_event),
+            _section_heading("Añadir observación anónima"),
+            ft.Row(controls=[admin_observation_position, admin_observation_wins], spacing=10),
+            ft.Row(controls=[admin_observation_losses, admin_observation_phase], spacing=10),
+            admin_observation_coins,
+            ft.Button("Añadir observación", icon=ft.Icons.ADD, on_click=add_admin_observation),
             ft.Row(
                 controls=[
-                    _section_heading("Resultados de usuarios", "Pendientes hasta tu revisión"),
+                    _section_heading("Resultados de usuarios"),
                     ft.Button("Actualizar", icon=ft.Icons.REFRESH, on_click=refresh_admin),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             pending_results_view,
-            _section_heading("Importar observaciones", "Las etiquetas de jugador no se envían a Supabase"),
-            ft.Text(
-                "Importa solo observaciones anónimas nuevas: Juego Fecha Posición Victorias MonedasTotales MonedasGanadas 720 Derrotas Franja. Derrotas y franja son opcionales; históricos y últimos sábados quedan fuera.",
-                size=12,
-                color=MUTED,
-            ),
-            admin_import_field,
-            ft.Row(
-                controls=[
-                    ft.Button("Importar filas", icon=ft.Icons.UPLOAD, on_click=import_pasted_observations),
-                    ft.Button("Importar registro local anónimo", icon=ft.Icons.FOLDER_OPEN, on_click=import_local_observations),
-                ],
-                wrap=True,
-                spacing=8,
-            ),
         ],
         spacing=12,
         scroll=ft.ScrollMode.AUTO,
@@ -1349,7 +1450,7 @@ def main(page: ft.Page) -> None:
     auth_entry_buttons = [login_landing_button, register_landing_button]
     auth_landing = ft.Column(
         controls=[
-            _section_heading("Bienvenido a Atlas Planner", "Inicia sesión o crea tu cuenta para continuar"),
+            _section_heading(f"Bienvenido a {APP_NAME}", "Inicia sesión o crea tu cuenta para continuar"),
             ft.Row(
                 controls=[
                     login_landing_button,
@@ -1391,7 +1492,7 @@ def main(page: ft.Page) -> None:
     )
     auth_layout = ft.Column(
         controls=[
-            ft.Text("ATLAS PLANNER", size=13, weight=ft.FontWeight.BOLD, color=TEAL),
+            ft.Text(APP_NAME.upper(), size=13, weight=ft.FontWeight.BOLD, color=TEAL),
             auth_panel,
         ],
         spacing=18,
@@ -1436,7 +1537,7 @@ def main(page: ft.Page) -> None:
                             controls=[
                                 ft.Column(
                                     controls=[
-                                        ft.Text("ATLAS PLANNER", size=12, weight=ft.FontWeight.BOLD, color=TEAL),
+                                        ft.Text(APP_NAME.upper(), size=12, weight=ft.FontWeight.BOLD, color=TEAL),
                                         ft.Text("Tu estrategia, en números", size=12, color=MUTED),
                                     ],
                                     spacing=1,

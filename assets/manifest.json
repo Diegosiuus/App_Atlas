@@ -1,8 +1,8 @@
 {
-  "name": "Atlas Planner",
-  "short_name": "Atlas Planner",
+  "name": "Atlas Earth Calc",
+  "short_name": "Atlas Earth Calc",
   "id": "/App_Atlas/atlas-planner-v3",
-  "description": "Estimaciones personales de ingresos y minijuegos de Atlas Earth.",
+  "description": "Calculadoras y predicciones para Atlas Earth.",
   "start_url": "/App_Atlas/",
   "scope": "/App_Atlas/",
   "display": "standalone",

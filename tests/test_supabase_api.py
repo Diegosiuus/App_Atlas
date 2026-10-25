@@ -199,6 +199,44 @@ assert SupabaseConfig
         self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
         self.assertEqual(json.loads(request.data), result)
 
+    @patch("atlas_planner.supabase_api.urlopen")
+    def test_admin_event_data_uses_dedicated_rpc_and_sends_brackets(self, mocked_urlopen):
+        response = BytesIO(b"42")
+        response.__enter__ = lambda obj: obj
+        response.__exit__ = lambda *args: None
+        mocked_urlopen.return_value = response
+        event = {
+            "game": "Racer", "event_date": "2026-09-21", "duration_minutes": 720,
+            "total_coins": 1000,
+            "tiers": [{"position_min": 4, "position_max": 25, "coins_awarded": 100}],
+        }
+
+        self.config.save_admin_event_data(event, "user-access-token")
+
+        request = mocked_urlopen.call_args.args[0]
+        self.assertIn("admin_save_event_data", request.full_url)
+        self.assertEqual(json.loads(request.data)["p_tiers"], event["tiers"])
+        self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
+
+    @patch("atlas_planner.supabase_api.urlopen")
+    def test_admin_observation_uses_dedicated_rpc(self, mocked_urlopen):
+        response = BytesIO(b"null")
+        response.__enter__ = lambda obj: obj
+        response.__exit__ = lambda *args: None
+        mocked_urlopen.return_value = response
+
+        self.config.add_admin_observation(
+            "Racer", "2026-09-21",
+            {"position": 25, "victories": 100, "losses": None, "activity_phase": None, "coins_earned": None},
+            "user-access-token",
+        )
+
+        request = mocked_urlopen.call_args.args[0]
+        self.assertIn("admin_add_observation", request.full_url)
+        payload = json.loads(request.data)
+        self.assertEqual(payload["p_event_date"], "2026-09-21")
+        self.assertIsNone(payload["p_losses"])
+
 
 if __name__ == "__main__":
     unittest.main()

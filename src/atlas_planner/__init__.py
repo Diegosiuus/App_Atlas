@@ -1,1 +1,1 @@
-"""Atlas Planner application package."""
+"""Atlas Earth Calc application package."""

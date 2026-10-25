@@ -3,11 +3,15 @@
 Run migrations `0001_initial_schema.sql`, `0002_player_game_results.sql`,
 `0003_usernames_review_and_training.sql`, and then
 `0004_tournament_format.sql` and `0005_archive_discontinued_saturdays.sql` in
-order in the Supabase SQL Editor. Migration 0004 preserves existing results,
+order in the Supabase SQL Editor, followed by `0006_admin_event_forms_and_tiers.sql`.
+Migration 0004 preserves existing results,
 archives legacy events (while recognizing eligible 12-hour regular events),
 and adds experimental fields without deleting the old play-time column.
 Migration 0005 ensures discontinued last-Saturday events are labeled as legacy
 and archived, including on databases that applied an earlier 0004 draft.
+Migration 0006 adds event-level aggregate coin awards for the five rank bands,
+admin-only form RPCs, and prevents approval of player results until the event
+pool and all five bands have been recorded.
 
 After you have signed up and confirmed your own account, grant that account
 administrator access from the SQL Editor. Replace the email with the exact
@@ -24,14 +28,11 @@ key to the app or its `.env`; the app uses the publishable key and user access
 tokens, while privileged work is restricted to database functions that check
 the authenticated user's admin row.
 
-Admin import accepts anonymous whitespace-separated rows in this order:
-game, date, position, victories, total event coins, coins earned, duration in
-minutes, optional losses (0-10), and optional activity phase (`inicio`,
-`medio`, `final`). Only regular 12-hour tournaments on Monday, Tuesday,
-Thursday, or Sunday are accepted. Legacy data, including last-Saturday events,
-is retained but archived and excluded from predictions. The local-registry import filters out
-all rows except eligible new-format events. Imported observations are
-deduplicated by source key. A user's own result stays private and pending
-until approved; only the approved rank, wins, losses, phase, game, date, and
-coin pool are copied to model tables. Losses and phase are experimental and do
-not currently alter predictions.
+In the Admin screen, first save the event date, total coin pool, and aggregate
+coins for each rank band. The five band amounts represent the coins awarded
+collectively to players in that band; they are not individual payouts. Then
+add anonymous observations individually or review submitted player results.
+Regular tournaments on Monday, Tuesday, Thursday, or Sunday are accepted.
+Legacy data, including discontinued Saturday events, is retained but excluded
+from predictions. A user's result stays private and pending until approved;
+only approved result data is copied to the anonymous model table.

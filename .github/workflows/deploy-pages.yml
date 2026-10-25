@@ -1,4 +1,4 @@
-name: Deploy Atlas Planner to GitHub Pages
+name: Deploy Atlas Earth Calc to GitHub Pages
 
 on:
   push:
@@ -32,8 +32,8 @@ jobs:
           --route-url-strategy hash
           --assets assets
           --distpath ../dist
-          --app-name "Atlas Planner"
-          --app-short-name "Atlas"
+          --app-name "Atlas Earth Calc"
+          --app-short-name "Atlas Earth Calc"
           --app-description "Calculadoras y predicciones para Atlas Earth"
           --pwa-background-color "#F2F6F5"
           --pwa-theme-color "#087F72"

@@ -1,4 +1,4 @@
-# Atlas Planner
+# Atlas Earth Calc
 
 Aplicación web instalable, pensada primero para móvil, para estimar ingresos de Atlas Earth y analizar resultados de minijuegos. La autenticación y los perfiles usan Supabase; los registros aprobados y anónimos alimentan las predicciones compartidas.
 
