@@ -62,6 +62,28 @@ def _money(value: float | int) -> str:
     return f"${value:,.2f}"
 
 
+def _picker_selected_date(event_value: object, control_value: object) -> date | None:
+    for value in (event_value, control_value):
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                return value.astimezone().date()
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            if "T" in value:
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                return parsed.astimezone().date() if parsed.tzinfo else parsed.date()
+            try:
+                return date.fromisoformat(value[:10])
+            except ValueError:
+                continue
+    return None
+
+
 def _build_admin_event_payload(
     game: str, event_date: date, total_coins: str, tier_values: dict[tuple[int, int], str]
 ) -> dict:
@@ -483,11 +505,9 @@ def main(page: ft.Page) -> None:
 
     def update_selected_date(e: ft.Event[ft.DatePicker], *, for_result: bool) -> None:
         nonlocal prediction_event_date, result_event_date
-        selected = e.control.value
+        selected = _picker_selected_date(e.data, e.control.value)
         if selected is None:
             return
-        if isinstance(selected, datetime):
-            selected = selected.date()
         game = (result_game_field if for_result else game_field).value or "Racer"
         feedback = result_date_feedback if for_result else prediction_date_feedback
         try:
@@ -512,11 +532,9 @@ def main(page: ft.Page) -> None:
 
     async def update_admin_event_date(e: ft.Event[ft.DatePicker]) -> None:
         nonlocal admin_event_date
-        selected = e.control.value
+        selected = _picker_selected_date(e.data, e.control.value)
         if selected is None:
             return
-        if isinstance(selected, datetime):
-            selected = selected.date()
         try:
             infer_event_duration_minutes(selected, admin_game_field.value or "Racer")
         except ValueError as exc:

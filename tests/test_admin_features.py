@@ -11,6 +11,7 @@ from atlas_planner.app import (
     _admin_import_rows,
     _build_admin_event_payload,
     _build_admin_observation_payload,
+    _picker_selected_date,
     _build_profile_payload,
     _load_local_records,
     _local_registry_path,
@@ -20,6 +21,11 @@ from atlas_planner.supabase_api import SupabaseConfig
 
 
 class AdminImportTests(unittest.TestCase):
+    def test_picker_prefers_selected_iso_date_from_event_over_stale_control_value(self):
+        selected = _picker_selected_date("2026-10-26", date(2026, 10, 25))
+
+        self.assertEqual(selected, date(2026, 10, 26))
+
     def test_admin_event_payload_contains_pool_and_all_aggregate_tiers(self):
         payload = _build_admin_event_payload(
             "Racer",
