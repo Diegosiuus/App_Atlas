@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 import sys
@@ -18,7 +19,6 @@ from atlas_planner.minigame_model import (
     backtest_by_event,
     estimate_victories_for_position,
     estimate_event_pool,
-    estimate_saved_session_pace,
     infer_event_duration_minutes,
     predict_event,
 )
@@ -38,7 +38,7 @@ def make_records():
                     total_coins=100_000 + week * 1_000,
                     coins_earned=0,
                     played_minutes=None,
-                    duration_minutes=120,
+                    duration_minutes=720,
                     player=None,
                 )
             )
@@ -87,33 +87,20 @@ class AtlasIncomeTests(unittest.TestCase):
 
 
 class MinigameModelTests(unittest.TestCase):
-    def test_last_saturday_uses_fishing_vintage_not_regular_fishing(self):
-        self.assertEqual(infer_event_duration_minutes("2026-08-29", "Fishing(V)"), 60)
-        with self.assertRaises(ValueError):
-            infer_event_duration_minutes("2026-08-29", "Fishing")
+    def test_regular_tournament_duration_and_last_saturdays_are_excluded(self):
+        self.assertEqual(infer_event_duration_minutes("2026-08-03", "Racer"), 720)
+        with self.assertRaisesRegex(ValueError, "ya no se celebran"):
+            infer_event_duration_minutes("2026-08-29", "Racer")
 
-    def test_two_hour_history_is_duration_normalized_with_wider_range(self):
-        records = make_records()
-        pool = estimate_event_pool(records, "Racer", "2026-08-03", 180)
-        target = estimate_victories_for_position(
-            records, "Racer", 25, 150_000, "2026-08-03", 180
-        )
-        self.assertEqual(pool["estimated_coins"], 151_500)
-        self.assertEqual(target["estimated_victories"], 152)
-        self.assertLessEqual(target["lower_estimate"], round(target["estimated_victories"] * 0.8))
-        self.assertGreaterEqual(target["upper_estimate"], round(target["estimated_victories"] * 1.2))
+    def test_legacy_history_is_excluded_from_regular_tournament_predictions(self):
+        records = [replace(record, duration_minutes=180) for record in make_records()]
+        with self.assertRaisesRegex(ValueError, "no earlier active history"):
+            estimate_event_pool(records, "Racer", "2026-08-03", 720)
 
-    def test_saved_session_pace_uses_only_the_selected_game(self):
-        pace = estimate_saved_session_pace(
-            [
-                {"game": "Racer", "victories": 20, "played_minutes": 10},
-                {"game": "Racer", "victories": 40, "played_minutes": 10},
-                {"game": "Golf", "victories": 100, "played_minutes": 1},
-            ],
-            "Racer",
-        )
-        self.assertEqual(pace["sample_sessions"], 2)
-        self.assertEqual(pace["median_victories_per_minute"], 3)
+    def test_archived_twelve_hour_rows_are_excluded(self):
+        records = [replace(record, archived=True) for record in make_records()]
+        with self.assertRaisesRegex(ValueError, "no earlier active history"):
+            estimate_event_pool(records, "Racer", "2026-08-03", 720)
 
     def test_1500_prediction_uses_standard_median_for_even_history(self):
         records = []
@@ -127,24 +114,24 @@ class MinigameModelTests(unittest.TestCase):
                     total_coins=100_000,
                     coins_earned=0,
                     played_minutes=None,
-                    duration_minutes=120,
+                    duration_minutes=720,
                     player=None,
                 )
             )
         estimate = estimate_victories_for_position(
-            records, "Racer", 1500, 100_000, "2026-06-15", 120
+            records, "Racer", 1500, 100_000, "2026-06-15", 720
         )
         self.assertEqual(estimate["estimated_victories"], 15)
 
-    def test_prediction_thresholds_are_monotonic_and_3h_is_low_confidence(self):
+    def test_prediction_thresholds_are_monotonic_and_keep_regular_duration(self):
         prediction = predict_event(make_records(), "Racer", "2026-08-03")
         wins = [
             prediction["thresholds"][position]["estimated_victories"]
             for position in TARGET_POSITIONS
         ]
         self.assertEqual(wins, sorted(wins, reverse=True))
-        self.assertTrue(prediction["pool"]["duration_mismatch"])
-        self.assertEqual(prediction["pool"]["confidence"], "baja")
+        self.assertEqual(prediction["duration_minutes"], 720)
+        self.assertNotIn("time", prediction["thresholds"][25])
 
     def test_backtest_1500_matches_its_historical_median_baseline(self):
         result = backtest_by_event(make_records(), min_prior_events=1)

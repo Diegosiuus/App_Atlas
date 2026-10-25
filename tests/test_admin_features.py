@@ -44,16 +44,26 @@ class AdminImportTests(unittest.TestCase):
                 "user-1", "x", {"common": 0, "rare": 0, "epic": 0, "legendary": 0}, 0, 0, 0
             )
 
-    def test_parses_spanish_date_and_ignores_player_label(self):
-        rows = _admin_import_rows("Racer 21/09/2026 25 123 1000 200 45 120 private_name")
+    def test_parses_new_tournament_format_and_ignores_player_label(self):
+        rows = _admin_import_rows("Racer 21/09/2026 25 123 1000 200 720 4 medio")
 
         self.assertEqual(rows[0]["event_date"], "2026-09-21")
-        self.assertEqual(rows[0]["duration_minutes"], 120)
+        self.assertEqual(rows[0]["duration_minutes"], 720)
+        self.assertEqual(rows[0]["losses"], 4)
+        self.assertEqual(rows[0]["activity_phase"], "medio")
         self.assertNotIn("player", rows[0])
 
+    def test_rejects_more_than_ten_losses_in_admin_import(self):
+        with self.assertRaisesRegex(ValueError, "derrotas"):
+            _admin_import_rows("Racer 21/09/2026 25 123 1000 200 720 11 NA")
+
     def test_rejects_non_event_weekday(self):
-        with self.assertRaisesRegex(ValueError, "minijuegos regulares"):
+        with self.assertRaisesRegex(ValueError, "torneos regulares"):
             _admin_import_rows("Racer 23-09-2026 25 123 1000 200 180 NA")
+
+    def test_discontinued_saturday_rows_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "ya no se celebran"):
+            _admin_import_rows("Racer 26-09-2026 25 123 1000 200 720 NA NA")
 
     def test_training_observations_are_mapped_without_identity(self):
         records = _training_records(
@@ -64,7 +74,7 @@ class AdminImportTests(unittest.TestCase):
                 "event": {
                     "game": "Racer",
                     "event_date": "2026-09-21",
-                    "duration_minutes": 180,
+                    "duration_minutes": 720,
                     "total_coins": 1000,
                 },
             }]

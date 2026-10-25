@@ -23,7 +23,7 @@ PROFILE_COLUMNS = (
     "badge_count,normal_boost_hours_per_day,srb_boost_hours_per_month"
 )
 GAME_SESSION_COLUMNS = (
-    "id,game,event_date,victories,final_position,played_minutes,review_status,created_at"
+    "id,game,event_date,victories,final_position,losses,activity_phase,review_status,created_at"
 )
 
 
@@ -309,7 +309,7 @@ class SupabaseConfig:
         )
 
     def get_training_records(self, access_token: str) -> list[dict]:
-        select = "select=position,victories,coins_earned,event:minigame_events(game,event_date,duration_minutes,total_coins,archived)"
+        select = "select=position,victories,coins_earned,losses,activity_phase,event:minigame_events(game,event_date,duration_minutes,total_coins,archived,event_format)"
         rows: list[dict] = []
         offset = 0
         while True:

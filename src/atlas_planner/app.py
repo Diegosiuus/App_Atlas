@@ -21,12 +21,9 @@ from .atlas_income import (
 from .auth_session import clear_refresh_token, load_refresh_token, store_refresh_token
 from .minigame_model import (
     ACTIVE_GAMES,
-    ARCHIVED_GAMES,
     GameRecord,
     TARGET_POSITIONS,
     NORMAL_EVENT_WEEKDAYS,
-    estimate_saved_session_pace,
-    estimate_time_minutes,
     infer_event_duration_minutes,
     is_last_saturday,
     load_records,
@@ -106,7 +103,7 @@ def _next_event_date(today: date | None = None) -> date:
     start = today or date.today()
     for offset in range(15):
         candidate = start + timedelta(days=offset)
-        if candidate.weekday() in NORMAL_EVENT_WEEKDAYS or is_last_saturday(candidate):
+        if candidate.weekday() in NORMAL_EVENT_WEEKDAYS:
             return candidate
     raise RuntimeError("No event date found in the next two weeks")
 
@@ -130,20 +127,24 @@ def _admin_import_rows(raw_text: str) -> list[dict]:
         fields = line.split()
         if not fields or fields[0].startswith("#") or fields[0].lower() == "juego":
             continue
-        if len(fields) < 8:
-            raise ValueError(
-                f"Línea {line_number}: se esperaban 8 o 9 columnas del registro."
-            )
+        if len(fields) < 7:
+            raise ValueError(f"Línea {line_number}: se esperaban al menos 7 columnas.")
         game, raw_date, raw_position, raw_wins, raw_pool, raw_earned = fields[:6]
-        has_played_and_duration = False
+        raw_duration = fields[6]
+        raw_losses = None
+        raw_phase = None
+        legacy_layout = False
         if len(fields) >= 9:
             try:
-                if fields[6].upper() == "NA" or float(fields[6]) >= 0:
-                    int(fields[7])
-                    has_played_and_duration = True
+                old_duration = int(fields[7])
+                legacy_layout = float(fields[6]) != 720 and old_duration in {60, 120, 180}
             except ValueError:
                 pass
-        raw_duration = fields[7] if has_played_and_duration else fields[6]
+        if legacy_layout:
+            raw_duration = fields[7]
+        else:
+            raw_losses = fields[7] if len(fields) >= 8 else None
+            raw_phase = fields[8] if len(fields) >= 9 else None
         try:
             try:
                 event_date = date.fromisoformat(raw_date)
@@ -157,6 +158,8 @@ def _admin_import_rows(raw_text: str) -> list[dict]:
             total_coins = int(raw_pool)
             coins_earned = None if raw_earned.upper() == "NA" else int(raw_earned)
             duration = int(raw_duration) if raw_duration.upper() != "NA" else None
+            losses = None if raw_losses is None or raw_losses.upper() == "NA" else int(raw_losses)
+            phase = None if raw_phase is None or raw_phase.upper() == "NA" else raw_phase.lower()
         except ValueError as exc:
             raise ValueError(f"Línea {line_number}: fecha o valores numéricos inválidos.") from exc
 
@@ -170,20 +173,18 @@ def _admin_import_rows(raw_text: str) -> list[dict]:
         seen_positions.add(position_key)
         if coins_earned is not None and coins_earned < 0:
             raise ValueError(f"Línea {line_number}: monedas ganadas no puede ser negativo.")
-        if game in ARCHIVED_GAMES:
-            if not is_last_saturday(event_date):
-                raise ValueError(f"Línea {line_number}: Racer(V) solo corresponde al último sábado.")
-            expected_duration = 60
-        else:
-            try:
-                expected_duration = infer_event_duration_minutes(event_date, game)
-            except ValueError as exc:
-                raise ValueError(f"Línea {line_number}: {exc}") from exc
+        if losses is not None and not 0 <= losses <= 10:
+            raise ValueError(f"Línea {line_number}: derrotas fuera del rango 0–10.")
+        if phase is not None and phase not in {"inicio", "medio", "final"}:
+            raise ValueError(f"Línea {line_number}: franja debe ser inicio, medio o final.")
+        try:
+            expected_duration = infer_event_duration_minutes(event_date, game)
+        except ValueError as exc:
+            raise ValueError(f"Línea {line_number}: {exc}") from exc
         if duration is None:
             duration = expected_duration
-        allowed_durations = {60} if expected_duration == 60 else {120, 180}
-        if duration not in allowed_durations:
-            raise ValueError(f"Línea {line_number}: duración no válida para {game} el {event_date:%d/%m/%Y}.")
+        if duration != expected_duration:
+            raise ValueError(f"Línea {line_number}: los torneos regulares deben durar 12 h.")
         rows.append(
             {
                 "game": game,
@@ -193,6 +194,8 @@ def _admin_import_rows(raw_text: str) -> list[dict]:
                 "total_coins": total_coins,
                 "coins_earned": coins_earned,
                 "duration_minutes": duration,
+                "losses": losses,
+                "activity_phase": phase,
             }
         )
     if not rows:
@@ -219,6 +222,10 @@ def _training_records(rows: list[dict]) -> list[GameRecord]:
                 played_minutes=None,
                 duration_minutes=int(event["duration_minutes"]),
                 player=None,
+                losses=None if row.get("losses") is None else int(row["losses"]),
+                activity_phase=row.get("activity_phase"),
+                event_format=event.get("event_format"),
+                archived=bool(event.get("archived", False)),
             )
         )
     return records
@@ -305,10 +312,6 @@ def main(page: ft.Page) -> None:
         options=[ft.DropdownOption(key=str(position), text=str(position)) for position in TARGET_POSITIONS],
         expand=True,
     )
-    player_field = ft.TextField(
-        label="Jugador del histórico (opcional)",
-        hint_text="Si no has iniciado sesión, usa un nombre ya presente en el registro",
-    )
     game_feedback = ft.Column(spacing=10)
     training_feedback = ft.Text("Las predicciones usarán el histórico local y el compartido aprobado.", size=12, color=MUTED)
     result_game_field = ft.Dropdown(
@@ -323,7 +326,17 @@ def main(page: ft.Page) -> None:
     )
     result_wins_field = _number_field("Victorias")
     result_position_field = _number_field("Puesto final")
-    result_minutes_field = _number_field("Minutos jugados", "0")
+    result_losses_field = _number_field("Derrotas (0–10)", "")
+    result_phase_field = ft.Dropdown(
+        label="Franja principal (opcional)",
+        value=None,
+        options=[
+            ft.DropdownOption(key="inicio", text="Inicio (0–4 h)"),
+            ft.DropdownOption(key="medio", text="Tramo medio (4–8 h)"),
+            ft.DropdownOption(key="final", text="Tramo final (8–12 h)"),
+        ],
+        expand=True,
+    )
     result_feedback = ft.Text("Inicia sesión para guardar resultados.", size=13, color=MUTED)
     prediction_date_feedback = ft.Text(size=12, color=RED)
     result_date_feedback = ft.Text(size=12, color=RED)
@@ -364,7 +377,7 @@ def main(page: ft.Page) -> None:
     pending_results_view = ft.Column(spacing=10)
     admin_import_field = ft.TextField(
         label="Filas del registro", multiline=True, min_lines=7, max_lines=14,
-        hint_text="Juego Fecha Posicion Victorias MonedasTotales MonedasGanadas TiempoJugado(min) Duracion(min) Jugador",
+        hint_text="Juego Fecha Posición Victorias MonedasTotales MonedasGanadas Duración(min) Derrotas Franja",
     )
 
     prediction_date_picker = ft.DatePicker(
@@ -557,8 +570,6 @@ def main(page: ft.Page) -> None:
             else "Perfil y resultados sincronizados."
         )
         account_identity.value = f"{username} · {email}"
-        player_field.value = username
-        player_field.visible = False
         save_profile_button.disabled = False
         sign_out_button.disabled = False
         save_game_result_button.disabled = False
@@ -664,8 +675,6 @@ def main(page: ft.Page) -> None:
         account_feedback.value = "Sesión cerrada en este dispositivo."
         email_field.value = ""
         password_field.value = ""
-        player_field.value = ""
-        player_field.visible = True
         admin_nav_button.visible = False
         admin_view.visible = False
         auth_landing.visible = True
@@ -704,6 +713,7 @@ def main(page: ft.Page) -> None:
                 if record.get("final_position") is not None
                 else ""
             )
+            archived_note = " · histórico archivado" if record.get("review_status") == "archived" else ""
             result_history.controls.append(
                 ft.Row(
                     controls=[
@@ -713,7 +723,9 @@ def main(page: ft.Page) -> None:
                             expand=True,
                         ),
                         ft.Text(
-                            f"{record['victories']} victorias · {record['played_minutes']:g} min{position}",
+                            f"{record['victories']} victorias · "
+                            f"{record.get('losses') if record.get('losses') is not None else 'derrotas N/D'} "
+                            f"derrotas{position}{archived_note}",
                             color=MUTED,
                             size=12,
                         ),
@@ -736,9 +748,10 @@ def main(page: ft.Page) -> None:
             if not (result_wins_field.value or "").strip():
                 raise ValueError("Indica cuántas victorias conseguiste.")
             victories = _parse_number(result_wins_field.value or "", "Victorias", integer=True)
-            played_minutes = _parse_number(result_minutes_field.value or "", "Minutos jugados")
-            if played_minutes <= 0 or played_minutes > duration_minutes:
-                raise ValueError(f"El tiempo debe ser mayor que 0 y no superar {duration_minutes} minutos.")
+            raw_losses = (result_losses_field.value or "").strip()
+            losses = _parse_number(raw_losses, "Derrotas", integer=True) if raw_losses else None
+            if losses is not None and not 0 <= losses <= 10:
+                raise ValueError("Las derrotas deben estar entre 0 y 10.")
             raw_position = (result_position_field.value or "").strip()
             position = (
                 _parse_number(raw_position, "Puesto final", integer=True)
@@ -753,7 +766,8 @@ def main(page: ft.Page) -> None:
                 "event_date": event_date.isoformat(),
                 "victories": victories,
                 "final_position": position,
-                "played_minutes": played_minutes,
+                "losses": losses,
+                "activity_phase": result_phase_field.value or None,
             }
             result_feedback.value = "Guardando resultado…"
             page.update()
@@ -896,18 +910,7 @@ def main(page: ft.Page) -> None:
                 records,
                 game_field.value or "Racer",
                 prediction_event_date,
-                player=(session.get("username") or (player_field.value or "").strip()) or None,
             )
-            personal_pace = (
-                estimate_saved_session_pace(saved_game_sessions, game_field.value or "Racer")
-                if session
-                else None
-            )
-            if personal_pace:
-                for position, estimate in prediction["thresholds"].items():
-                    estimate["time"] = estimate_time_minutes(
-                        int(estimate["estimated_victories"]), personal_pace
-                    )
             pool = prediction["pool"]
             selected_position = int(target_field.value or "25")
             selected = prediction["thresholds"][selected_position]
@@ -945,7 +948,6 @@ def main(page: ft.Page) -> None:
                                 size=13,
                                 color=INK,
                             ),
-                            _time_text(selected.get("time")),
                         ],
                         spacing=7,
                     )
@@ -966,10 +968,10 @@ def main(page: ft.Page) -> None:
                     spacing=8,
                 )
             )
-            if prediction["duration_minutes"] == 180 or pool["confidence"] == "baja":
+            if pool["confidence"] == "baja":
                 game_feedback.controls.append(
                     ft.Text(
-                        "Estimación orientativa: hay pocos eventos comparables y el histórico de 3 h todavía es limitado.",
+                        "Estimación orientativa: hay pocos torneos regulares comparables de 12 h.",
                         size=12,
                         color=AMBER,
                     )
@@ -1007,9 +1009,8 @@ def main(page: ft.Page) -> None:
             ft.Row(controls=[game_field, target_field], spacing=10),
             ft.Row(controls=[ft.Text("Fecha del evento", expand=True), date_field]),
             prediction_date_feedback,
-            player_field,
             ft.Text(
-                "Con sesión iniciada, el tiempo personal usa tus resultados guardados; si no, puedes indicar un jugador del histórico. La duración se infiere del calendario.",
+                "Torneos regulares de 12 h. Los eventos del último sábado se conservan como histórico, pero no se registran ni predicen.",
                 size=12,
                 color=MUTED,
             ),
@@ -1054,7 +1055,8 @@ def main(page: ft.Page) -> None:
             ),
             result_date_feedback,
             ft.Row(controls=[result_wins_field, result_position_field], spacing=10),
-            result_minutes_field,
+            ft.Row(controls=[result_losses_field, result_phase_field], spacing=10),
+            ft.Text("Las derrotas y la franja son experimentales y no alteran aún los pronósticos.", size=12, color=MUTED),
             ft.Text(
                 "Se permite una entrada por minijuego y fecha; si la vuelves a guardar, se actualiza.",
                 size=12,
@@ -1141,8 +1143,12 @@ def main(page: ft.Page) -> None:
             page.update()
 
     async def import_local_observations(e: ft.Event[ft.Button]) -> None:
-        if not local_records:
-            admin_feedback.value = "No hay un registro local disponible para importar."
+        candidates = [
+            item for item in local_records
+            if item.duration_minutes == 720 and not is_last_saturday(item.event_date)
+        ]
+        if not candidates:
+            admin_feedback.value = "El registro local no contiene observaciones regulares nuevas de 12 h."
             admin_feedback.color = RED
             page.update()
             return
@@ -1156,7 +1162,7 @@ def main(page: ft.Page) -> None:
                 "coins_earned": item.coins_earned,
                 "duration_minutes": item.duration_minutes,
             }
-            for item in local_records
+            for item in candidates
         ]
         await submit_admin_import(rows, "Histórico local anonimizado")
 
@@ -1200,11 +1206,10 @@ def main(page: ft.Page) -> None:
     def make_pending_result(item: dict) -> ft.Control:
         pool_field = _number_field("Bolsa total de monedas")
         event_date = date.fromisoformat(str(item["event_date"]))
-        default_duration = 60 if is_last_saturday(event_date) else 180
         duration_field = ft.Dropdown(
             label="Duración del evento",
-            value=str(default_duration),
-            options=[ft.DropdownOption(key=str(value), text=f"{value // 60} h") for value in (60, 120, 180)],
+            value="720",
+            options=[ft.DropdownOption(key="720", text="12 h")],
             expand=True,
         )
         note_field = ft.TextField(label="Nota de revisión (opcional)", multiline=True, min_lines=1, max_lines=3)
@@ -1215,7 +1220,8 @@ def main(page: ft.Page) -> None:
             ft.Column(
                 controls=[
                     ft.Text(f"{event_date:%d/%m/%Y} · {item['game']} · {identity}", weight=ft.FontWeight.BOLD, color=INK),
-                    ft.Text(f"{rank_label} · {item['victories']} victorias · {item['played_minutes']:g} min", size=13, color=MUTED),
+                    ft.Text(f"{rank_label} · {item['victories']} victorias · "
+                            f"{item.get('losses') if item.get('losses') is not None else 'derrotas N/D'} derrotas", size=13, color=MUTED),
                     ft.Row(controls=[pool_field, duration_field], spacing=8),
                     note_field,
                     ft.Row(
@@ -1249,7 +1255,7 @@ def main(page: ft.Page) -> None:
             pending_results_view,
             _section_heading("Importar observaciones", "Las etiquetas de jugador no se envían a Supabase"),
             ft.Text(
-                "Pega filas de 8 columnas (Juego Fecha Posición Victorias MonedasTotales MonedasGanadas Duración Jugador) o 9 columnas del registro original. Se acepta AAAA-MM-DD, DD-MM-AAAA o DD/MM/AAAA.",
+                "Importa solo observaciones anónimas nuevas: Juego Fecha Posición Victorias MonedasTotales MonedasGanadas 720 Derrotas Franja. Derrotas y franja son opcionales; históricos y últimos sábados quedan fuera.",
                 size=12,
                 color=MUTED,
             ),
@@ -1477,18 +1483,6 @@ def _metric_row(label: str, value: str) -> ft.Control:
             ft.Text(value, color=INK, weight=ft.FontWeight.W_500),
         ],
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-    )
-
-
-def _time_text(value: object) -> ft.Control:
-    if not isinstance(value, dict):
-        return ft.Text("Tiempo personal: sin sesiones históricas para este jugador y juego.", size=12, color=MUTED)
-    return ft.Text(
-        "Tiempo personal estimado: "
-        f"{value['central_minutes']} min (rango {value['optimistic_minutes']}–{value['pessimistic_minutes']} min), "
-        f"con {value['pace_sessions']} sesiones.",
-        size=12,
-        color=INK,
     )
 
 

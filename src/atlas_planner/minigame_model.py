@@ -1,8 +1,7 @@
-"""Historical analog forecasts for Atlas Earth minigame events.
+"""Historical analog forecasts for Atlas Earth minigame tournaments.
 
 This first version uses weighted medians rather than a high-capacity ML model.
-It needs only the Python standard library and keeps archived Racer(V) data out
-of active estimates.
+It excludes pre-tournament and unconfirmed event formats from active estimates.
 """
 
 from __future__ import annotations
@@ -16,11 +15,12 @@ from typing import Iterable, Sequence
 
 
 TARGET_POSITIONS = (25, 50, 100, 500, 1500)
-ARCHIVED_GAMES = frozenset({"Racer(V)"})
+ARCHIVED_GAMES = frozenset({"Racer(V)", "Fishing(V)"})
 ACTIVE_GAMES = frozenset(
-    {"Racer", "Fishing", "Golf", "Warship", "Bowling", "Fishing(V)"}
+    {"Racer", "Fishing", "Golf", "Warship", "Bowling"}
 )
 NORMAL_EVENT_WEEKDAYS = frozenset({0, 1, 3, 6})  # Monday, Tuesday, Thursday, Sunday
+TOURNAMENT_DURATION_MINUTES = 12 * 60
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,10 @@ class GameRecord:
     played_minutes: float | None
     duration_minutes: int
     player: str | None
+    losses: int | None = None
+    activity_phase: str | None = None
+    event_format: str | None = None
+    archived: bool = False
 
     @property
     def event_key(self) -> tuple[date, str]:
@@ -61,18 +65,14 @@ def is_last_saturday(value: date | str) -> bool:
 def infer_event_duration_minutes(value: date | str, game: str) -> int:
     event_date = _as_date(value)
     if game in ARCHIVED_GAMES:
-        raise ValueError(f"{game} is archived and excluded from active predictions")
+        raise ValueError(f"{game} está archivado y no se usa en predicciones actuales.")
     if game not in ACTIVE_GAMES:
         raise ValueError(f"unknown active game: {game}")
-    if game == "Fishing(V)" and not is_last_saturday(event_date):
-        raise ValueError("Fishing (V) solo se juega el último sábado del mes.")
     if is_last_saturday(event_date):
-        if game == "Fishing":
-            raise ValueError("Los sábados se juega Fishing(V), no el Fishing normal")
-        return 60
+        raise ValueError("Los eventos del último sábado ya no se celebran y solo se conservan como histórico.")
     if event_date.weekday() not in NORMAL_EVENT_WEEKDAYS:
-        raise ValueError("Los minijuegos regulares se juegan lunes, martes, jueves y domingo.")
-    return 180
+        raise ValueError("Los torneos regulares se juegan lunes, martes, jueves y domingo.")
+    return TOURNAMENT_DURATION_MINUTES
 
 
 def load_records(file_path: str | Path) -> list[GameRecord]:
@@ -116,7 +116,15 @@ def load_records(file_path: str | Path) -> list[GameRecord]:
 
 
 def _active_records(records: Iterable[GameRecord]) -> list[GameRecord]:
-    return [record for record in records if record.game not in ARCHIVED_GAMES]
+    return [
+        record for record in records
+        if record.game not in ARCHIVED_GAMES
+        and not record.archived
+        and record.event_format != "legacy"
+        and record.game in ACTIVE_GAMES
+        and record.duration_minutes == TOURNAMENT_DURATION_MINUTES
+        and not is_last_saturday(record.event_date)
+    ]
 
 
 def _events(records: Iterable[GameRecord]) -> list[dict[str, object]]:
@@ -200,6 +208,8 @@ def estimate_event_pool(
     if game not in ACTIVE_GAMES:
         raise ValueError(f"unknown active game: {game}")
     target_duration = duration_minutes or infer_event_duration_minutes(target_date, game)
+    if target_duration != TOURNAMENT_DURATION_MINUTES or is_last_saturday(target_date):
+        raise ValueError("Solo se admiten torneos regulares confirmados de 12 horas.")
     history = [event for event in _events(records) if event["game"] == game]
     history = [event for event in history if event["date"] < target_date]
     if not history:
@@ -244,6 +254,8 @@ def estimate_victories_for_position(
         raise ValueError(f"{game} is not an active prediction category")
 
     target_date = _as_date(event_date)
+    if duration_minutes != TOURNAMENT_DURATION_MINUTES or is_last_saturday(target_date):
+        raise ValueError("Solo se admiten torneos regulares confirmados de 12 horas.")
     history = [event for event in _events(records) if event["game"] == game]
     history = [event for event in history if event["date"] < target_date]
     if not history:
@@ -333,61 +345,6 @@ def estimate_victories_for_position(
     }
 
 
-def estimate_player_pace(
-    records: Iterable[GameRecord], player: str, game: str
-) -> dict[str, float | int] | None:
-    """Return observed victories/minute for this player and game, or None."""
-    rates = [
-        record.victories / record.played_minutes
-        for record in records
-        if record.game == game
-        and record.player == player
-        and record.played_minutes is not None
-        and record.played_minutes > 0
-    ]
-    return _summarize_pace(rates)
-
-
-def estimate_saved_session_pace(
-    sessions: Iterable[dict[str, object]], game: str
-) -> dict[str, float | int] | None:
-    """Estimate a user's pace from their saved game sessions."""
-    rates = [
-        int(session["victories"]) / float(session["played_minutes"])
-        for session in sessions
-        if session["game"] == game and float(session["played_minutes"]) > 0
-    ]
-    return _summarize_pace(rates)
-
-
-def _summarize_pace(rates: Sequence[float]) -> dict[str, float | int] | None:
-    if not rates:
-        return None
-    ordered = sorted(rates)
-    return {
-        "median_victories_per_minute": median(ordered),
-        "lower_pace": _weighted_quantile([(rate, 1.0) for rate in ordered], 0.25),
-        "upper_pace": _weighted_quantile([(rate, 1.0) for rate in ordered], 0.75),
-        "sample_sessions": len(ordered),
-    }
-
-
-def estimate_time_minutes(victories: int, pace: dict[str, float | int] | None) -> dict[str, int | float] | None:
-    if pace is None:
-        return None
-    central_pace = float(pace["median_victories_per_minute"])
-    slow_pace = float(pace["lower_pace"])
-    fast_pace = float(pace["upper_pace"])
-    if central_pace <= 0 or slow_pace <= 0 or fast_pace <= 0:
-        return None
-    return {
-        "central_minutes": round(victories / central_pace),
-        "optimistic_minutes": round(victories / fast_pace),
-        "pessimistic_minutes": round(victories / slow_pace),
-        "pace_sessions": int(pace["sample_sessions"]),
-    }
-
-
 def predict_event(
     records: Iterable[GameRecord],
     game: str,
@@ -395,12 +352,13 @@ def predict_event(
     player: str | None = None,
     duration_minutes: int | None = None,
 ) -> dict[str, object]:
-    """Forecast the pool, threshold wins, and personal time when available."""
+    """Forecast the pool and wins thresholds for a regular 12-hour tournament."""
     records = list(records)
     target_date = _as_date(event_date)
     duration = duration_minutes or infer_event_duration_minutes(target_date, game)
+    if duration != TOURNAMENT_DURATION_MINUTES or is_last_saturday(target_date):
+        raise ValueError("No hay torneos regulares en los últimos sábados del mes.")
     pool = estimate_event_pool(records, game, target_date, duration)
-    pace = estimate_player_pace(records, player, game) if player is not None else None
     raw_thresholds = {
         position: estimate_victories_for_position(
             records,
@@ -420,11 +378,9 @@ def predict_event(
         item = raw_thresholds[position]
         wins = min(int(item["estimated_victories"]), previous_wins)
         previous_wins = wins
-        time_estimate = estimate_time_minutes(wins, pace)
         thresholds[position] = {
             **item,
             "estimated_victories": wins,
-            "time": time_estimate,
         }
 
     return {
@@ -433,7 +389,6 @@ def predict_event(
         "duration_minutes": duration,
         "pool": pool,
         "thresholds": thresholds,
-        "personal_time_available": pace is not None,
     }
 
 

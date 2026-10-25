@@ -185,10 +185,11 @@ assert SupabaseConfig
         result = {
             "user_id": "user-1",
             "game": "Racer",
-            "event_date": "2026-09-20",
+            "event_date": "2026-09-21",
             "victories": 42,
             "final_position": 25,
-            "played_minutes": 60,
+            "losses": 2,
+            "activity_phase": "medio",
         }
 
         self.config.save_game_session(result, "user-access-token")
