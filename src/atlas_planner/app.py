@@ -148,6 +148,28 @@ def _approved_game_sessions(records: list[dict]) -> list[dict]:
     return [record for record in records if record.get("review_status") == "approved"]
 
 
+def _build_support_ticket_payload(
+    category: str, subject: str, message: str, contact_email: str = ""
+) -> dict:
+    subject = subject.strip()
+    message = message.strip()
+    contact_email = contact_email.strip().lower()
+    if category not in {"bug", "idea", "other"}:
+        raise ValueError("Elige un tipo de reporte válido.")
+    if not 3 <= len(subject) <= 120:
+        raise ValueError("El asunto debe tener entre 3 y 120 caracteres.")
+    if not 10 <= len(message) <= 4000:
+        raise ValueError("El mensaje debe tener entre 10 y 4000 caracteres.")
+    if contact_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact_email):
+        raise ValueError("El correo para responderte no parece válido.")
+    return {
+        "category": category,
+        "subject": subject,
+        "message": message,
+        "contact_email": contact_email or None,
+    }
+
+
 def _load_local_records(file_path: str | Path) -> list[GameRecord]:
     if sys.platform == "emscripten":
         return []
@@ -425,6 +447,30 @@ def main(page: ft.Page) -> None:
     )
     result_feedback = ft.Text("Inicia sesión para guardar resultados.", size=13, color=MUTED)
     profile_feedback = ft.Text(size=13, color=MUTED)
+    support_category_field = ft.Dropdown(
+        label="Tipo de mensaje",
+        value="bug",
+        options=[
+            ft.DropdownOption(key="bug", text="Problema"),
+            ft.DropdownOption(key="idea", text="Sugerencia"),
+            ft.DropdownOption(key="other", text="Otro"),
+        ],
+        expand=True,
+    )
+    support_subject_field = ft.TextField(label="Asunto", max_length=120)
+    support_message_field = ft.TextField(
+        label="Mensaje", multiline=True, min_lines=4, max_lines=8, max_length=4000
+    )
+    support_contact_email_field = ft.TextField(
+        label="Correo para responderte (opcional)",
+        keyboard_type=ft.KeyboardType.EMAIL,
+    )
+    support_feedback = ft.Text(size=13, color=MUTED)
+    support_admin_feedback = ft.Text(size=12, color=MUTED)
+    support_tickets_view = ft.Column(spacing=10)
+    send_support_ticket_button = ft.Button(
+        "Enviar reporte", icon=ft.Icons.SEND, disabled=True
+    )
     prediction_date_feedback = ft.Text(size=12, color=RED)
     result_date_feedback = ft.Text(size=12, color=RED)
     result_history = ft.Column(spacing=6)
@@ -739,11 +785,13 @@ def main(page: ft.Page) -> None:
         save_profile_button.disabled = False
         sign_out_button.disabled = False
         save_game_result_button.disabled = False
+        send_support_ticket_button.disabled = False
         page.clean()
         page.add(app_root)
         if session["is_admin"] == "true":
             await load_admin_event_data()
             await reload_pending_results(notify_new=True)
+            await reload_support_tickets()
             start_admin_notifications()
 
     async def authenticate(create_account: bool) -> None:
@@ -827,6 +875,48 @@ def main(page: ft.Page) -> None:
             profile_feedback.color = RED
         page.update()
 
+    async def send_support_ticket(e: ft.Event[ft.Button]) -> None:
+        if supabase is None or not session:
+            support_feedback.value = "Inicia sesión para enviar un reporte."
+            support_feedback.color = RED
+            page.update()
+            return
+        try:
+            ticket = _build_support_ticket_payload(
+                support_category_field.value or "",
+                support_subject_field.value or "",
+                support_message_field.value or "",
+                support_contact_email_field.value or "",
+            )
+            send_support_ticket_button.disabled = True
+            support_feedback.value = "Enviando…"
+            support_feedback.color = MUTED
+            page.update()
+            ticket_id = await asyncio.to_thread(
+                supabase.submit_support_ticket, ticket, session["access_token"]
+            )
+            support_subject_field.value = ""
+            support_message_field.value = ""
+            support_contact_email_field.value = ""
+            try:
+                email_sent = await asyncio.to_thread(
+                    supabase.notify_support_ticket, ticket_id, session["access_token"]
+                )
+            except SupabaseError:
+                email_sent = False
+            support_feedback.value = (
+                "Reporte registrado y aviso enviado. Gracias por ayudarnos a mejorar."
+                if email_sent
+                else "Reporte guardado. El aviso por correo no se pudo enviar, pero queda disponible en Admin."
+            )
+            support_feedback.color = TEAL if email_sent else AMBER
+        except (SupabaseError, ValueError) as exc:
+            support_feedback.value = str(exc)
+            support_feedback.color = RED
+        finally:
+            send_support_ticket_button.disabled = not bool(session)
+            page.update()
+
     async def sign_out(e: ft.Event[ft.Button]) -> None:
         nonlocal known_pending_results
         try:
@@ -839,11 +929,16 @@ def main(page: ft.Page) -> None:
         known_pending_results = None
         saved_game_sessions.clear()
         render_game_history()
+        support_subject_field.value = ""
+        support_message_field.value = ""
+        support_contact_email_field.value = ""
+        support_feedback.value = ""
         email_field.disabled = False
         password_field.disabled = False
         save_profile_button.disabled = True
         sign_out_button.disabled = True
         save_game_result_button.disabled = True
+        send_support_ticket_button.disabled = True
         result_feedback.value = "Inicia sesión para guardar resultados."
         account_feedback.value = "Sesión cerrada en este dispositivo."
         email_field.value = ""
@@ -865,6 +960,7 @@ def main(page: ft.Page) -> None:
 
     sign_in_button.on_click = sign_in
     sign_up_button.on_click = sign_up
+    send_support_ticket_button.on_click = send_support_ticket
     save_profile_button.on_click = save_profile
     sign_out_button.on_click = sign_out
 
@@ -1235,6 +1331,13 @@ def main(page: ft.Page) -> None:
                 size=12,
                 color=MUTED,
             ),
+            _section_heading("Soporte y sugerencias"),
+            support_category_field,
+            support_subject_field,
+            support_message_field,
+            support_contact_email_field,
+            send_support_ticket_button,
+            support_feedback,
         ],
         spacing=12,
         scroll=ft.ScrollMode.AUTO,
@@ -1333,6 +1436,95 @@ def main(page: ft.Page) -> None:
                     await reload_pending_results(notify_new=True, render_view=False)
         finally:
             admin_poll_future = None
+
+    async def reload_support_tickets() -> None:
+        if not session or session.get("is_admin") != "true":
+            return
+        try:
+            tickets = await asyncio.to_thread(
+                supabase.get_support_tickets, session["access_token"]
+            )
+            support_tickets_view.controls.clear()
+            if not tickets:
+                support_tickets_view.controls.append(
+                    ft.Text("Todavía no hay reportes.", size=13, color=MUTED)
+                )
+            for ticket in tickets:
+                status_field = ft.Dropdown(
+                    label="Estado",
+                    value=ticket["status"],
+                    options=[
+                        ft.DropdownOption(key="new", text="Nuevo"),
+                        ft.DropdownOption(key="reviewing", text="En revisión"),
+                        ft.DropdownOption(key="resolved", text="Resuelto"),
+                    ],
+                    width=160,
+                )
+
+                async def save_ticket_status(
+                    e: ft.Event[ft.Button],
+                    *, ticket_id: int = int(ticket["id"]),
+                    field: ft.Dropdown = status_field,
+                ) -> None:
+                    try:
+                        await asyncio.to_thread(
+                            supabase.update_support_ticket,
+                            ticket_id,
+                            field.value or "new",
+                            session["access_token"],
+                        )
+                        support_admin_feedback.value = "Estado del reporte actualizado."
+                        support_admin_feedback.color = TEAL
+                        await reload_support_tickets()
+                    except SupabaseError as exc:
+                        support_admin_feedback.value = str(exc)
+                        support_admin_feedback.color = RED
+                        page.update()
+
+                created_at = str(ticket.get("created_at", ""))[:16].replace("T", " ")
+                category_label = {
+                    "bug": "Problema",
+                    "idea": "Sugerencia",
+                    "other": "Otro",
+                }.get(ticket.get("category"), "Reporte")
+                contact = ticket.get("contact_email") or "Sin correo de respuesta"
+                support_tickets_view.controls.append(
+                    _panel(
+                        ft.Column(
+                            controls=[
+                                ft.Text(
+                                    f"{category_label} · {ticket.get('subject', '')}",
+                                    weight=ft.FontWeight.BOLD,
+                                    color=INK,
+                                ),
+                                ft.Text(
+                                    f"{ticket.get('username') or 'Usuario'} · {created_at} · {contact}",
+                                    size=12,
+                                    color=MUTED,
+                                ),
+                                ft.Text(str(ticket.get("message", "")), selectable=True, color=INK),
+                                ft.Row(
+                                    controls=[
+                                        status_field,
+                                        ft.Button(
+                                            "Guardar",
+                                            icon=ft.Icons.SAVE,
+                                            on_click=save_ticket_status,
+                                        ),
+                                    ],
+                                    spacing=8,
+                                ),
+                            ],
+                            spacing=8,
+                        )
+                    )
+                )
+            support_admin_feedback.value = f"{len(tickets)} reportes cargados."
+            support_admin_feedback.color = MUTED
+        except SupabaseError as exc:
+            support_admin_feedback.value = f"No se pudieron consultar los reportes: {exc}"
+            support_admin_feedback.color = RED
+        page.update()
 
     def start_admin_notifications() -> None:
         nonlocal admin_poll_future
@@ -1535,6 +1727,19 @@ def main(page: ft.Page) -> None:
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             pending_results_view,
+            ft.Row(
+                controls=[
+                    _section_heading("Reportes y sugerencias"),
+                    ft.Button(
+                        "Actualizar",
+                        icon=ft.Icons.REFRESH,
+                        on_click=lambda e: page.run_task(reload_support_tickets),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            support_admin_feedback,
+            support_tickets_view,
         ],
         spacing=12,
         scroll=ft.ScrollMode.AUTO,
@@ -1558,6 +1763,7 @@ def main(page: ft.Page) -> None:
                 page.run_task(refresh_game_history)
             if index == 4 and session.get("is_admin") == "true":
                 page.run_task(reload_pending_results)
+                page.run_task(reload_support_tickets)
 
         return handler
 

@@ -280,6 +280,53 @@ assert SupabaseConfig
         self.assertEqual(payload["p_event_date"], "2026-09-21")
         self.assertEqual(set(payload), {"p_game", "p_event_date", "p_position", "p_victories"})
 
+    @patch("atlas_planner.supabase_api.urlopen")
+    def test_support_ticket_submission_and_email_notification_use_authenticated_token(self, mocked_urlopen):
+        rpc_response = BytesIO(b"42")
+        rpc_response.__enter__ = lambda obj: obj
+        rpc_response.__exit__ = lambda *args: None
+        email_response = BytesIO(b'{"email_sent":true}')
+        email_response.__enter__ = lambda obj: obj
+        email_response.__exit__ = lambda *args: None
+        mocked_urlopen.side_effect = [rpc_response, email_response]
+
+        ticket_id = self.config.submit_support_ticket(
+            {
+                "category": "bug",
+                "subject": "No carga",
+                "message": "La pantalla queda en blanco.",
+                "contact_email": None,
+            },
+            "user-access-token",
+        )
+        email_sent = self.config.notify_support_ticket(ticket_id, "user-access-token")
+
+        self.assertEqual(ticket_id, 42)
+        self.assertTrue(email_sent)
+        self.assertIn("submit_support_ticket", mocked_urlopen.call_args_list[0].args[0].full_url)
+        self.assertIn("functions/v1/notify-support-ticket", mocked_urlopen.call_args_list[1].args[0].full_url)
+        self.assertEqual(
+            mocked_urlopen.call_args_list[0].args[0].get_header("Authorization"),
+            "Bearer user-access-token",
+        )
+
+    @patch("atlas_planner.supabase_api.urlopen")
+    def test_admin_can_load_and_update_support_tickets_via_rpc(self, mocked_urlopen):
+        list_response = BytesIO(b'[{"id":7,"status":"new"}]')
+        list_response.__enter__ = lambda obj: obj
+        list_response.__exit__ = lambda *args: None
+        update_response = BytesIO(b"null")
+        update_response.__enter__ = lambda obj: obj
+        update_response.__exit__ = lambda *args: None
+        mocked_urlopen.side_effect = [list_response, update_response]
+
+        tickets = self.config.get_support_tickets("user-access-token")
+        self.config.update_support_ticket(7, "resolved", "user-access-token")
+
+        self.assertEqual(tickets[0]["id"], 7)
+        self.assertIn("admin_list_support_tickets", mocked_urlopen.call_args_list[0].args[0].full_url)
+        self.assertIn("admin_update_support_ticket", mocked_urlopen.call_args_list[1].args[0].full_url)
+
 
 if __name__ == "__main__":
     unittest.main()

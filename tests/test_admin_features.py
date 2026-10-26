@@ -13,6 +13,7 @@ from atlas_planner.app import (
     _build_admin_observation_payload,
     _build_player_position_payload,
     _approved_game_sessions,
+    _build_support_ticket_payload,
     _picker_selected_date,
     _build_profile_payload,
     _load_local_records,
@@ -103,6 +104,21 @@ class AdminImportTests(unittest.TestCase):
         ]
 
         self.assertEqual(_approved_game_sessions(records), [records[0]])
+
+    def test_support_ticket_payload_trims_and_keeps_contact_optional(self):
+        payload = _build_support_ticket_payload(
+            "idea", "  Mejoras  ", "  Me gustaría ver un resumen mensual.  "
+        )
+
+        self.assertEqual(payload["subject"], "Mejoras")
+        self.assertEqual(payload["message"], "Me gustaría ver un resumen mensual.")
+        self.assertIsNone(payload["contact_email"])
+
+    def test_support_ticket_payload_validates_contact_email_and_lengths(self):
+        with self.assertRaisesRegex(ValueError, "correo"):
+            _build_support_ticket_payload("bug", "Error", "No carga la página.", "bad-email")
+        with self.assertRaisesRegex(ValueError, "asunto"):
+            _build_support_ticket_payload("bug", "x", "No carga la página.")
 
     def test_admin_observation_requires_victories(self):
         with self.assertRaisesRegex(ValueError, "victorias"):

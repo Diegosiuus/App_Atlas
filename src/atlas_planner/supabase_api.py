@@ -351,6 +351,50 @@ class SupabaseConfig:
             "/rest/v1/rpc/admin_pending_game_results", method="POST", payload={}, access_token=access_token
         )
 
+    def submit_support_ticket(self, ticket: dict, access_token: str) -> int:
+        result = self._request(
+            "/rest/v1/rpc/submit_support_ticket",
+            method="POST",
+            payload={
+                "p_category": ticket["category"],
+                "p_subject": ticket["subject"],
+                "p_message": ticket["message"],
+                "p_contact_email": ticket.get("contact_email"),
+            },
+            access_token=access_token,
+        )
+        if not isinstance(result, int):
+            raise SupabaseError("Supabase no confirmó el envío del reporte.")
+        return result
+
+    def notify_support_ticket(self, ticket_id: int, access_token: str) -> bool:
+        result = self._request(
+            "/functions/v1/notify-support-ticket",
+            method="POST",
+            payload={"ticket_id": ticket_id},
+            access_token=access_token,
+        )
+        return isinstance(result, dict) and bool(result.get("email_sent"))
+
+    def get_support_tickets(self, access_token: str) -> list[dict]:
+        result = self._request(
+            "/rest/v1/rpc/admin_list_support_tickets",
+            method="POST",
+            payload={},
+            access_token=access_token,
+        )
+        if not isinstance(result, list):
+            raise SupabaseError("Supabase devolvió una lista de reportes inesperada.")
+        return result
+
+    def update_support_ticket(self, ticket_id: int, status: str, access_token: str) -> None:
+        self._request(
+            "/rest/v1/rpc/admin_update_support_ticket",
+            method="POST",
+            payload={"p_ticket_id": ticket_id, "p_status": status},
+            access_token=access_token,
+        )
+
     def review_result(self, session_id: int, approve: bool, total_coins: int | None, duration_minutes: int | None, note: str, access_token: str) -> None:
         self._request(
             "/rest/v1/rpc/admin_review_game_result", method="POST",

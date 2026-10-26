@@ -5,8 +5,8 @@ Run migrations `0001_initial_schema.sql`, `0002_player_game_results.sql`,
 `0005_archive_discontinued_saturdays.sql`, `0006_admin_event_forms_and_tiers.sql`,
 `0007_fix_admin_result_rejection.sql`, `0008_enforce_tournament_rotation.sql`,
 `0009_top_three_individual_awards.sql`, `0010_store_top_three_without_training.sql`,
-and finally `0011_player_history_and_training_scope.sql`, in that order in the
-Supabase SQL Editor.
+`0011_player_history_and_training_scope.sql`, and finally
+`0012_support_feedback.sql`, in that order in the Supabase SQL Editor.
 Migration 0004 preserves existing results,
 archives legacy events (while recognizing eligible 12-hour regular events),
 and adds experimental fields without deleting the old play-time column.
@@ -32,6 +32,8 @@ blocked by missing event prize data. Approved player results from positions 4–
 are included anonymously in training when the event data is complete; results at
 positions 1–3 or above 1500 remain only in the player's history. If the event is
 completed after approval, those eligible results are synchronized automatically.
+Migration 0012 adds private support reports, user submission limits, and
+admin-only report review/status functions.
 
 After you have signed up and confirmed your own account, grant that account
 administrator access from the SQL Editor. Replace the email with the exact
@@ -57,3 +59,17 @@ Regular tournaments on Monday, Tuesday, Thursday, or Sunday are accepted.
 Legacy data, including discontinued Saturday events, is retained but excluded
 from predictions. A user's result stays private and pending until approved;
 only approved result data is copied to the anonymous model table.
+
+To enable email alerts for support reports, verify a sender domain with Resend,
+then link the Supabase CLI to this project and configure the function secrets:
+
+```powershell
+supabase link --project-ref YOUR_PROJECT_REF
+supabase secrets set RESEND_API_KEY=re_your_key SUPPORT_INBOX_EMAIL=you@example.com SUPPORT_FROM_EMAIL="Atlas Earth Calc <reports@your-verified-domain.com>"
+supabase functions deploy notify-support-ticket
+```
+
+The Resend key, inbox address, and sender address belong only in Supabase Edge
+Function secrets. Never put the service-role key or Resend key in `.env`, the
+public app configuration, or GitHub. Reports remain stored and visible in Admin
+even while email delivery is not configured or temporarily unavailable.
