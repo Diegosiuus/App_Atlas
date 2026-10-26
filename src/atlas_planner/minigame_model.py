@@ -21,6 +21,9 @@ ACTIVE_GAMES = frozenset(
 )
 NORMAL_EVENT_WEEKDAYS = frozenset({0, 1, 3, 6})  # Monday, Tuesday, Thursday, Sunday
 TOURNAMENT_DURATION_MINUTES = 12 * 60
+GAME_ROTATION = ("Racer", "Fishing", "Golf", "Warship", "Bowling")
+ROTATION_ANCHOR_DATE = date(2026, 4, 5)
+ROTATION_ANCHOR_GAME = "Warship"
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,27 @@ def is_last_saturday(value: date | str) -> bool:
     return event_date.weekday() == 5 and (event_date + timedelta(days=7)).month != event_date.month
 
 
+def expected_regular_game(value: date | str) -> str:
+    """Return the game assigned by the confirmed tournament rotation."""
+    event_date = _as_date(value)
+    if event_date.weekday() not in NORMAL_EVENT_WEEKDAYS:
+        raise ValueError("Los torneos regulares se juegan lunes, martes, jueves y domingo.")
+
+    game_index = GAME_ROTATION.index(ROTATION_ANCHOR_GAME)
+    current = ROTATION_ANCHOR_DATE
+    if event_date > current:
+        while current < event_date:
+            current += timedelta(days=1)
+            if current.weekday() in NORMAL_EVENT_WEEKDAYS:
+                game_index = (game_index + 1) % len(GAME_ROTATION)
+    else:
+        while current > event_date:
+            if current.weekday() in NORMAL_EVENT_WEEKDAYS:
+                game_index = (game_index - 1) % len(GAME_ROTATION)
+            current -= timedelta(days=1)
+    return GAME_ROTATION[game_index]
+
+
 def infer_event_duration_minutes(value: date | str, game: str) -> int:
     event_date = _as_date(value)
     if game in ARCHIVED_GAMES:
@@ -72,6 +96,11 @@ def infer_event_duration_minutes(value: date | str, game: str) -> int:
         raise ValueError("Los eventos del último sábado ya no se celebran y solo se conservan como histórico.")
     if event_date.weekday() not in NORMAL_EVENT_WEEKDAYS:
         raise ValueError("Los torneos regulares se juegan lunes, martes, jueves y domingo.")
+    expected_game = expected_regular_game(event_date)
+    if game != expected_game:
+        raise ValueError(
+            f"El {event_date:%d/%m/%Y} corresponde a {expected_game}, no a {game}."
+        )
     return TOURNAMENT_DURATION_MINUTES
 
 
@@ -254,7 +283,7 @@ def estimate_victories_for_position(
         raise ValueError(f"{game} is not an active prediction category")
 
     target_date = _as_date(event_date)
-    if duration_minutes != TOURNAMENT_DURATION_MINUTES or is_last_saturday(target_date):
+    if duration_minutes != infer_event_duration_minutes(target_date, game):
         raise ValueError("Solo se admiten torneos regulares confirmados de 12 horas.")
     history = [event for event in _events(records) if event["game"] == game]
     history = [event for event in history if event["date"] < target_date]

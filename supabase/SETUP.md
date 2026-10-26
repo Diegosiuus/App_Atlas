@@ -1,10 +1,10 @@
 # Supabase setup for account review and shared training
 
 Run migrations `0001_initial_schema.sql`, `0002_player_game_results.sql`,
-`0003_usernames_review_and_training.sql`, and then
-`0004_tournament_format.sql` and `0005_archive_discontinued_saturdays.sql` in
-order in the Supabase SQL Editor, followed by `0006_admin_event_forms_and_tiers.sql`
-and `0007_fix_admin_result_rejection.sql`.
+`0003_usernames_review_and_training.sql`, `0004_tournament_format.sql`,
+`0005_archive_discontinued_saturdays.sql`, `0006_admin_event_forms_and_tiers.sql`,
+`0007_fix_admin_result_rejection.sql`, and finally
+`0008_enforce_tournament_rotation.sql`, in that order in the Supabase SQL Editor.
 Migration 0004 preserves existing results,
 archives legacy events (while recognizing eligible 12-hour regular events),
 and adds experimental fields without deleting the old play-time column.
@@ -15,6 +15,10 @@ admin-only form RPCs, and prevents approval of player results until the event
 pool and all five bands have been recorded.
 Migration 0007 fixes the admin rejection path so a result can be rejected without
 event pool or tier data and the database trigger does not reset it to pending.
+Migration 0008 enforces the game rotation anchored at 5 April 2026 (Warship),
+archives invalid active event rows without deleting them, and limits current
+regular tournaments to one active event per date. Admin event data is loaded and
+updated by date; player and admin forms report rotation mismatches before saving.
 
 After you have signed up and confirmed your own account, grant that account
 administrator access from the SQL Editor. Replace the email with the exact

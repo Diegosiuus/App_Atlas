@@ -46,6 +46,13 @@ class AdminImportTests(unittest.TestCase):
                 {bracket: "30" for bracket in ((4, 25), (26, 50), (51, 100), (101, 500), (501, 1500))},
             )
 
+    def test_admin_event_rejects_game_outside_confirmed_rotation(self):
+        with self.assertRaisesRegex(ValueError, "corresponde a"):
+            _build_admin_event_payload(
+                "Racer", date(2026, 4, 6), "1000",
+                {(4, 25): "100", (26, 50): "100", (51, 100): "200", (101, 500): "300", (501, 1500): "200"},
+            )
+
     def test_admin_observation_fields_keep_individual_coins_separate_and_optional(self):
         observation = _build_admin_observation_payload("25", "123", "", "medio", "")
 

@@ -237,6 +237,24 @@ assert SupabaseConfig
         self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
 
     @patch("atlas_planner.supabase_api.urlopen")
+    def test_admin_event_lookup_is_by_date_and_returns_existing_game(self, mocked_urlopen):
+        event_response = BytesIO(b'[{"id":42,"game":"Warship","total_coins":500,"event_format":"regular_tournament","archived":false}]')
+        event_response.__enter__ = lambda obj: obj
+        event_response.__exit__ = lambda *args: None
+        tiers_response = BytesIO(b'[]')
+        tiers_response.__enter__ = lambda obj: obj
+        tiers_response.__exit__ = lambda *args: None
+        mocked_urlopen.side_effect = [event_response, tiers_response]
+
+        event = self.config.get_admin_event_data("2026-04-05", "user-access-token")
+
+        self.assertEqual(event["game"], "Warship")
+        request = mocked_urlopen.call_args_list[0].args[0]
+        self.assertIn("event_date=eq.2026-04-05", request.full_url)
+        self.assertIn("event_format=eq.regular_tournament", request.full_url)
+        self.assertNotIn("game=eq.", request.full_url)
+
+    @patch("atlas_planner.supabase_api.urlopen")
     def test_admin_observation_uses_dedicated_rpc(self, mocked_urlopen):
         response = BytesIO(b"null")
         response.__enter__ = lambda obj: obj

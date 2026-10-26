@@ -24,6 +24,7 @@ from .minigame_model import (
     GameRecord,
     TARGET_POSITIONS,
     NORMAL_EVENT_WEEKDAYS,
+    expected_regular_game,
     infer_event_duration_minutes,
     load_records,
     predict_event,
@@ -372,7 +373,7 @@ def main(page: ft.Page) -> None:
 
     game_field = ft.Dropdown(
         label="Minijuego",
-        value="Racer",
+        value=expected_regular_game(prediction_event_date),
         options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
         expand=True,
     )
@@ -517,12 +518,16 @@ def main(page: ft.Page) -> None:
         try:
             if for_result and selected > date.today():
                 raise ValueError("La fecha de la partida no puede estar en el futuro.")
-            infer_event_duration_minutes(selected, game)
+            expected_game = expected_regular_game(selected)
         except ValueError as exc:
             feedback.value = str(exc)
             page.update()
             return
-        feedback.value = ""
+        feedback.value = (
+            "" if game == expected_game
+            else f"Esta fecha corresponde a {expected_game}, no a {game}."
+        )
+        feedback.color = RED if game != expected_game else MUTED
         if for_result:
             result_event_date = selected
             result_date_field.content = selected.strftime("%d/%m/%Y")
@@ -531,8 +536,23 @@ def main(page: ft.Page) -> None:
             date_field.content = selected.strftime("%d/%m/%Y")
         page.update()
 
+    def validate_selected_game(e: ft.Event[ft.Dropdown], *, for_result: bool) -> None:
+        game = (result_game_field if for_result else game_field).value or "Racer"
+        event_date = result_event_date if for_result else prediction_event_date
+        feedback = result_date_feedback if for_result else prediction_date_feedback
+        try:
+            infer_event_duration_minutes(event_date, game)
+            feedback.value = ""
+            feedback.color = MUTED
+        except ValueError as exc:
+            feedback.value = str(exc)
+            feedback.color = RED
+        page.update()
+
     prediction_date_picker.on_change = lambda e: update_selected_date(e, for_result=False)
     result_date_picker.on_change = lambda e: update_selected_date(e, for_result=True)
+    game_field.on_change = lambda e: validate_selected_game(e, for_result=False)
+    result_game_field.on_change = lambda e: validate_selected_game(e, for_result=True)
 
     async def update_admin_event_date(e: ft.Event[ft.DatePicker]) -> None:
         nonlocal admin_event_date
@@ -540,7 +560,7 @@ def main(page: ft.Page) -> None:
         if selected is None:
             return
         try:
-            infer_event_duration_minutes(selected, admin_game_field.value or "Racer")
+            expected_regular_game(selected)
         except ValueError as exc:
             admin_feedback.value = str(exc)
             admin_feedback.color = RED
@@ -561,9 +581,10 @@ def main(page: ft.Page) -> None:
         except ValueError as exc:
             admin_feedback.value = str(exc)
             admin_feedback.color = RED
-            page.update()
-            return
-        await load_admin_event_data()
+        else:
+            admin_feedback.value = "Minijuego correcto para esta fecha."
+            admin_feedback.color = MUTED
+        page.update()
 
     admin_game_field.on_change = admin_game_changed
 
@@ -1309,12 +1330,12 @@ def main(page: ft.Page) -> None:
         try:
             event = await asyncio.to_thread(
                 supabase.get_admin_event_data,
-                admin_game_field.value or "Racer",
                 admin_event_date.isoformat(),
                 session["access_token"],
             )
             if event and event.get("event_format") == "regular_tournament" and not event.get("archived"):
                 admin_event_exists = True
+                admin_game_field.value = event["game"]
                 admin_total_coins_field.value = str(event["total_coins"])
                 for tier in event.get("tiers", []):
                     bracket = (int(tier["position_min"]), int(tier["position_max"]))
@@ -1322,6 +1343,7 @@ def main(page: ft.Page) -> None:
                         admin_tier_fields[bracket].value = str(tier["coins_awarded"])
                 admin_feedback.value = "Datos existentes del evento cargados."
             else:
+                admin_game_field.value = expected_regular_game(admin_event_date)
                 admin_feedback.value = "Evento nuevo."
             admin_feedback.color = MUTED
         except (SupabaseError, KeyError, TypeError, ValueError) as exc:

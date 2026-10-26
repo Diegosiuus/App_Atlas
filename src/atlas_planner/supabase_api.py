@@ -371,11 +371,12 @@ class SupabaseConfig:
             access_token=access_token,
         )
 
-    def get_admin_event_data(self, game: str, event_date: str, access_token: str) -> dict | None:
+    def get_admin_event_data(self, event_date: str, access_token: str) -> dict | None:
         query = urlencode({
-            "select": "id,total_coins,duration_minutes,event_format,archived",
-            "game": f"eq.{game}",
+            "select": "id,game,total_coins,duration_minutes,event_format,archived",
             "event_date": f"eq.{event_date}",
+            "event_format": "eq.regular_tournament",
+            "archived": "eq.false",
             "limit": "1",
         })
         rows = self._request(
