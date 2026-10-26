@@ -299,6 +299,21 @@ class SupabaseConfig:
             access_token=access_token,
         )
 
+    def game_session_exists(
+        self, user_id: str, game: str, event_date: str, access_token: str
+    ) -> bool:
+        query = urlencode({
+            "select": "id",
+            "user_id": f"eq.{user_id}",
+            "game": f"eq.{game}",
+            "event_date": f"eq.{event_date}",
+            "limit": "1",
+        })
+        result = self._request(
+            f"/rest/v1/player_game_sessions?{query}", access_token=access_token
+        )
+        return isinstance(result, list) and bool(result)
+
     def save_game_session(self, game_session: dict, access_token: str) -> None:
         self._request(
             "/rest/v1/player_game_sessions?on_conflict=user_id,game,event_date",

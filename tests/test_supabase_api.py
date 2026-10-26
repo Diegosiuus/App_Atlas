@@ -200,6 +200,24 @@ assert SupabaseConfig
         self.assertEqual(json.loads(request.data), result)
 
     @patch("atlas_planner.supabase_api.urlopen")
+    def test_game_session_exists_checks_the_user_and_event_key(self, mocked_urlopen):
+        response = BytesIO(b'[{"id":7}]')
+        response.__enter__ = lambda obj: obj
+        response.__exit__ = lambda *args: None
+        mocked_urlopen.return_value = response
+
+        exists = self.config.game_session_exists(
+            "user-1", "Racer", "2026-09-21", "user-access-token"
+        )
+
+        self.assertTrue(exists)
+        request = mocked_urlopen.call_args.args[0]
+        self.assertIn("user_id=eq.user-1", request.full_url)
+        self.assertIn("game=eq.Racer", request.full_url)
+        self.assertIn("event_date=eq.2026-09-21", request.full_url)
+        self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
+
+    @patch("atlas_planner.supabase_api.urlopen")
     def test_admin_event_data_uses_dedicated_rpc_and_sends_brackets(self, mocked_urlopen):
         response = BytesIO(b"42")
         response.__enter__ = lambda obj: obj

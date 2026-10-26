@@ -411,6 +411,7 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
     result_feedback = ft.Text("Inicia sesión para guardar resultados.", size=13, color=MUTED)
+    profile_feedback = ft.Text(size=13, color=MUTED)
     prediction_date_feedback = ft.Text(size=12, color=RED)
     result_date_feedback = ft.Text(size=12, color=RED)
     result_history = ft.Column(spacing=6)
@@ -456,6 +457,7 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
     admin_event_date = _previous_event_date("Racer")
+    admin_event_exists: bool | None = False
     admin_event_date_button = ft.Button(
         admin_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
@@ -790,9 +792,12 @@ def main(page: ft.Page) -> None:
                 supabase.save_profile, profile, session["access_token"]
             )
             fill_profile(saved_profile)
-            account_feedback.value = "Perfil guardado en tu cuenta."
+            profile_feedback.value = "Perfil guardado correctamente."
+            profile_feedback.color = TEAL
+            account_feedback.value = "Perfil guardado correctamente."
         except (SupabaseError, ValueError) as exc:
-            account_feedback.value = str(exc)
+            profile_feedback.value = str(exc)
+            profile_feedback.color = RED
         page.update()
 
     async def sign_out(e: ft.Event[ft.Button]) -> None:
@@ -910,20 +915,40 @@ def main(page: ft.Page) -> None:
                 "losses": losses,
                 "activity_phase": result_phase_field.value or None,
             }
+            existed = await asyncio.to_thread(
+                supabase.game_session_exists,
+                session["user_id"],
+                game,
+                event_date.isoformat(),
+                session["access_token"],
+            )
             result_feedback.value = "Guardando resultado…"
             page.update()
             await asyncio.to_thread(
                 supabase.save_game_session, record, session["access_token"]
             )
-            saved_game_sessions[:] = await asyncio.to_thread(
-                supabase.get_game_sessions,
-                session["user_id"],
-                session["access_token"],
+            result_wins_field.value = ""
+            result_position_field.value = ""
+            result_losses_field.value = ""
+            result_phase_field.value = None
+            result_feedback.value = (
+                "Resultado actualizado correctamente."
+                if existed
+                else "Resultado guardado correctamente."
             )
-            render_game_history()
-            result_feedback.value = "Resultado guardado. Si repites evento y minijuego, se actualizará ese registro."
+            result_feedback.color = TEAL
+            try:
+                saved_game_sessions[:] = await asyncio.to_thread(
+                    supabase.get_game_sessions,
+                    session["user_id"],
+                    session["access_token"],
+                )
+                render_game_history()
+            except SupabaseError as exc:
+                result_feedback.value += f" No se pudo actualizar el historial: {exc}"
         except (SupabaseError, ValueError) as exc:
             result_feedback.value = str(exc)
+            result_feedback.color = RED
         page.update()
 
     save_game_result_button = ft.Button(
@@ -1137,6 +1162,7 @@ def main(page: ft.Page) -> None:
             purchase_field,
             ft.Button("Calcular ingresos", icon=ft.Icons.CALCULATE, on_click=income_result),
             save_profile_button,
+            profile_feedback,
             income_feedback,
         ],
         spacing=12,
@@ -1274,8 +1300,10 @@ def main(page: ft.Page) -> None:
             admin_poll_future = page.run_task(admin_notification_loop)
 
     async def load_admin_event_data() -> None:
+        nonlocal admin_event_exists
         if not session or session.get("is_admin") != "true":
             return
+        admin_event_exists = False
         for field in (admin_total_coins_field, *admin_tier_fields.values()):
             field.value = ""
         try:
@@ -1286,6 +1314,7 @@ def main(page: ft.Page) -> None:
                 session["access_token"],
             )
             if event and event.get("event_format") == "regular_tournament" and not event.get("archived"):
+                admin_event_exists = True
                 admin_total_coins_field.value = str(event["total_coins"])
                 for tier in event.get("tiers", []):
                     bracket = (int(tier["position_min"]), int(tier["position_max"]))
@@ -1296,14 +1325,17 @@ def main(page: ft.Page) -> None:
                 admin_feedback.value = "Evento nuevo."
             admin_feedback.color = MUTED
         except (SupabaseError, KeyError, TypeError, ValueError) as exc:
+            admin_event_exists = None
             admin_feedback.value = f"No se pudieron cargar los datos del evento: {exc}"
             admin_feedback.color = RED
         page.update()
 
     async def save_admin_event(e: ft.Event[ft.Button]) -> None:
+        nonlocal admin_event_exists
         if not session or session.get("is_admin") != "true":
             return
         try:
+            event_previously_exists = admin_event_exists
             payload = _build_admin_event_payload(
                 admin_game_field.value or "Racer",
                 admin_event_date,
@@ -1313,7 +1345,11 @@ def main(page: ft.Page) -> None:
             await asyncio.to_thread(
                 supabase.save_admin_event_data, payload, session["access_token"]
             )
-            admin_feedback.value = "Evento y premios por tramo guardados."
+            admin_event_exists = True
+            if event_previously_exists is None:
+                admin_feedback.value = "Evento guardado o actualizado correctamente."
+            else:
+                admin_feedback.value = "Evento actualizado correctamente." if event_previously_exists else "Evento guardado correctamente."
             admin_feedback.color = TEAL
             await reload_pending_results()
         except (SupabaseError, ValueError) as exc:
@@ -1348,7 +1384,7 @@ def main(page: ft.Page) -> None:
                 field.value = ""
             admin_observation_phase.value = None
             await refresh_training_records()
-            admin_feedback.value = "Observación anónima añadida al evento."
+            admin_feedback.value = "Observación guardada correctamente."
             admin_feedback.color = TEAL
         except (SupabaseError, ValueError) as exc:
             admin_feedback.value = str(exc)
