@@ -122,27 +122,16 @@ def _build_admin_event_payload(
     }
 
 
-def _build_admin_observation_payload(
-    position: str, victories: str, losses: str, activity_phase: str | None, coins_earned: str
-) -> dict:
+def _build_admin_observation_payload(position: str, victories: str) -> dict:
     if not victories.strip():
         raise ValueError("Indica cuántas victorias tuvo el jugador.")
     rank = _parse_number(position, "Puesto", integer=True)
     wins = _parse_number(victories, "Victorias", integer=True)
-    raw_losses = losses.strip()
-    loss_count = _parse_number(raw_losses, "Derrotas", integer=True) if raw_losses else None
     if not 4 <= rank <= 1500:
         raise ValueError("El puesto debe estar entre 4 y 1500.")
-    if loss_count is not None and loss_count > 10:
-        raise ValueError("Las derrotas deben estar entre 0 y 10.")
-    raw_coins = coins_earned.strip()
-    earned = _parse_number(raw_coins, "Monedas ganadas", integer=True) if raw_coins else None
     return {
         "position": rank,
         "victories": wins,
-        "losses": loss_count,
-        "activity_phase": activity_phase or None,
-        "coins_earned": earned,
     }
 
 
@@ -483,16 +472,6 @@ def main(page: ft.Page) -> None:
     }
     admin_observation_position = _number_field("Puesto (4–1500)", "")
     admin_observation_wins = _number_field("Victorias", "")
-    admin_observation_losses = _number_field("Derrotas (opcional)", "")
-    admin_observation_phase = ft.Dropdown(
-        label="Franja (opcional)", value=None,
-        options=[
-            ft.DropdownOption(key="inicio", text="Inicio (0–4 h)"),
-            ft.DropdownOption(key="medio", text="Tramo medio (4–8 h)"),
-            ft.DropdownOption(key="final", text="Tramo final (8–12 h)"),
-        ], expand=True,
-    )
-    admin_observation_coins = _number_field("Monedas individuales (opcional)", "")
 
     prediction_date_picker = ft.DatePicker(
         value=prediction_event_date,
@@ -1436,9 +1415,6 @@ def main(page: ft.Page) -> None:
             observation = _build_admin_observation_payload(
                 admin_observation_position.value or "",
                 admin_observation_wins.value or "",
-                admin_observation_losses.value or "",
-                admin_observation_phase.value,
-                admin_observation_coins.value or "",
             )
             await asyncio.to_thread(
                 supabase.add_admin_observation,
@@ -1447,12 +1423,8 @@ def main(page: ft.Page) -> None:
                 observation,
                 session["access_token"],
             )
-            for field in (
-                admin_observation_position, admin_observation_wins,
-                admin_observation_losses, admin_observation_coins,
-            ):
+            for field in (admin_observation_position, admin_observation_wins):
                 field.value = ""
-            admin_observation_phase.value = None
             await refresh_training_records()
             admin_feedback.value = "Observación guardada correctamente."
             admin_feedback.color = TEAL
@@ -1541,8 +1513,6 @@ def main(page: ft.Page) -> None:
             ft.Button("Guardar evento", icon=ft.Icons.SAVE, on_click=save_admin_event),
             _section_heading("Añadir observación anónima"),
             ft.Row(controls=[admin_observation_position, admin_observation_wins], spacing=10),
-            ft.Row(controls=[admin_observation_losses, admin_observation_phase], spacing=10),
-            admin_observation_coins,
             ft.Button("Añadir observación", icon=ft.Icons.ADD, on_click=add_admin_observation),
             ft.Row(
                 controls=[

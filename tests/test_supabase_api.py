@@ -277,7 +277,7 @@ assert SupabaseConfig
         self.assertIn("admin_add_observation", request.full_url)
         payload = json.loads(request.data)
         self.assertEqual(payload["p_event_date"], "2026-09-21")
-        self.assertIsNone(payload["p_losses"])
+        self.assertEqual(set(payload), {"p_game", "p_event_date", "p_position", "p_victories"})
 
 
 if __name__ == "__main__":

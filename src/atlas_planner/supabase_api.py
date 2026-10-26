@@ -408,9 +408,6 @@ class SupabaseConfig:
                 "p_event_date": event_date,
                 "p_position": observation["position"],
                 "p_victories": observation["victories"],
-                "p_losses": observation["losses"],
-                "p_activity_phase": observation["activity_phase"],
-                "p_coins_earned": observation["coins_earned"],
             },
             access_token=access_token,
         )

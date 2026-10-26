@@ -64,16 +64,16 @@ class AdminImportTests(unittest.TestCase):
                 {(4, 25): "100", (26, 50): "100", (51, 100): "200", (101, 500): "300", (501, 1500): "200"},
             )
 
-    def test_admin_observation_fields_keep_individual_coins_separate_and_optional(self):
-        observation = _build_admin_observation_payload("25", "123", "", "medio", "")
+    def test_anonymous_admin_observation_contains_only_rank_and_victories(self):
+        observation = _build_admin_observation_payload("25", "123")
 
         self.assertEqual(observation["position"], 25)
-        self.assertIsNone(observation["losses"])
-        self.assertIsNone(observation["coins_earned"])
+        self.assertEqual(observation["victories"], 123)
+        self.assertEqual(set(observation), {"position", "victories"})
 
     def test_admin_observation_requires_victories(self):
         with self.assertRaisesRegex(ValueError, "victorias"):
-            _build_admin_observation_payload("25", "", "", None, "")
+            _build_admin_observation_payload("25", "")
 
     def test_private_registry_is_outside_python_package(self):
         registry = _local_registry_path()
