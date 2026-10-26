@@ -433,7 +433,7 @@ def main(page: ft.Page) -> None:
         result_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
     result_wins_field = _number_field("Victorias")
-    result_position_field = _number_field("Puesto final (1 o superior)", "")
+    result_position_field = _number_field("Puesto final", "")
     result_losses_field = _number_field("Derrotas (0–10)", "")
     result_phase_field = ft.Dropdown(
         label="Franja principal (opcional)",
