@@ -448,6 +448,8 @@ def main(page: ft.Page) -> None:
     admin_nav_button: ft.Button
     admin_feedback = ft.Text(size=12, color=MUTED)
     pending_results_view = ft.Column(spacing=10)
+    known_pending_results: dict[int, tuple] | None = None
+    admin_poll_future = None
     admin_game_field = ft.Dropdown(
         label="Minijuego", value="Racer",
         options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
@@ -712,7 +714,8 @@ def main(page: ft.Page) -> None:
         page.add(app_root)
         if session["is_admin"] == "true":
             await load_admin_event_data()
-            await reload_pending_results()
+            await reload_pending_results(notify_new=True)
+            start_admin_notifications()
 
     async def authenticate(create_account: bool) -> None:
         if supabase is None:
@@ -793,6 +796,7 @@ def main(page: ft.Page) -> None:
         page.update()
 
     async def sign_out(e: ft.Event[ft.Button]) -> None:
+        nonlocal known_pending_results
         try:
             await clear_refresh_token(session_preferences)
         except Exception:
@@ -800,6 +804,7 @@ def main(page: ft.Page) -> None:
             page.update()
             return
         session.clear()
+        known_pending_results = None
         saved_game_sessions.clear()
         render_game_history()
         email_field.disabled = False
@@ -1195,33 +1200,78 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
 
-    async def reload_pending_results() -> None:
+    async def reload_pending_results(
+        *, notify_new: bool = False, render_view: bool = True
+    ) -> None:
+        nonlocal known_pending_results
         if not session or session.get("is_admin") != "true":
             return
         try:
             pending = await asyncio.to_thread(
                 supabase.get_pending_results, session["access_token"]
             )
-            pending_results_view.controls.clear()
-            if not pending:
-                pending_results_view.controls.append(
-                    ft.Text("No hay resultados pendientes de revisión.", size=13, color=MUTED)
+            current = {
+                int(item["id"]): tuple(
+                    item.get(key)
+                    for key in ("game", "event_date", "victories", "final_position", "losses", "activity_phase")
                 )
-            grouped: dict[tuple[str, str], list[dict]] = {}
-            for item in pending:
-                grouped.setdefault((str(item["event_date"]), str(item["game"])), []).append(item)
-            for (event_date, game), items in grouped.items():
-                parsed_date = date.fromisoformat(event_date)
-                pending_results_view.controls.append(
-                    _section_heading(f"{game} · {parsed_date:%d/%m/%Y}")
+                for item in pending
+            }
+            first_check = known_pending_results is None
+            new_count = (
+                len(current)
+                if known_pending_results is None
+                else sum(
+                    1 for result_id, signature in current.items()
+                    if known_pending_results.get(result_id) != signature
                 )
-                pending_results_view.controls.extend(make_pending_result(item) for item in items)
+            )
+            known_pending_results = current
+            current_ids = set(current)
+            admin_nav_button.content = f"Admin ({len(current_ids)})" if current_ids else "Admin"
+            if render_view:
+                pending_results_view.controls.clear()
+                if not pending:
+                    pending_results_view.controls.append(
+                        ft.Text("No hay resultados pendientes de revisión.", size=13, color=MUTED)
+                    )
+                grouped: dict[tuple[str, str], list[dict]] = {}
+                for item in pending:
+                    grouped.setdefault((str(item["event_date"]), str(item["game"])), []).append(item)
+                for (event_date, game), items in grouped.items():
+                    parsed_date = date.fromisoformat(event_date)
+                    pending_results_view.controls.append(
+                        _section_heading(f"{game} · {parsed_date:%d/%m/%Y}")
+                    )
+                    pending_results_view.controls.extend(make_pending_result(item) for item in items)
             admin_feedback.value = f"{len(pending)} resultados pendientes."
             admin_feedback.color = MUTED
+            if notify_new and new_count:
+                message = f"Tienes {new_count} resultados pendientes de revisar." if first_check else (
+                    f"Han llegado {new_count} resultados nuevos para revisar."
+                )
+                page.show_dialog(
+                    ft.SnackBar(ft.Text(message), duration=ft.Duration(seconds=6))
+                )
         except SupabaseError as exc:
             admin_feedback.value = f"No se pudo consultar la cola de revisión: {exc}"
             admin_feedback.color = RED
         page.update()
+
+    async def admin_notification_loop() -> None:
+        nonlocal admin_poll_future
+        try:
+            while session.get("is_admin") == "true":
+                await asyncio.sleep(45)
+                if session.get("is_admin") == "true":
+                    await reload_pending_results(notify_new=True, render_view=False)
+        finally:
+            admin_poll_future = None
+
+    def start_admin_notifications() -> None:
+        nonlocal admin_poll_future
+        if admin_poll_future is None or admin_poll_future.done():
+            admin_poll_future = page.run_task(admin_notification_loop)
 
     async def load_admin_event_data() -> None:
         if not session or session.get("is_admin") != "true":
@@ -1344,7 +1394,7 @@ def main(page: ft.Page) -> None:
                     ft.Text(f"{rank_label} · {item['victories']} victorias · "
                             f"{item.get('losses') if item.get('losses') is not None else 'derrotas N/D'} derrotas", size=13, color=MUTED),
                     ft.Text(
-                        "Evento completo" if item.get("event_ready") else "Guarda antes la bolsa y los cinco tramos del evento.",
+                        "Evento completo" if item.get("event_ready") else "Para aprobar, guarda la bolsa y los cinco tramos. Puedes rechazar sin esos datos.",
                         size=12, color=TEAL if item.get("event_ready") else AMBER,
                     ),
                     note_field,
@@ -1356,7 +1406,12 @@ def main(page: ft.Page) -> None:
                                 disabled=(position is None or not 4 <= int(position) <= 1500 or not item.get("event_ready")),
                                 on_click=review_action(item, True, note_field),
                             ),
-                            ft.Button("Rechazar", icon=ft.Icons.CLOSE, on_click=review_action(item, False, note_field)),
+                            ft.Button(
+                                "Rechazar",
+                                icon=ft.Icons.CLOSE,
+                                style=ft.ButtonStyle(bgcolor="#FCE8E8", color=RED),
+                                on_click=review_action(item, False, note_field),
+                            ),
                         ],
                         spacing=8,
                     ),
@@ -1406,6 +1461,8 @@ def main(page: ft.Page) -> None:
                     color="white" if button_index == index else INK,
                 )
             page.update()
+            if index == 4 and session.get("is_admin") == "true":
+                page.run_task(reload_pending_results)
 
         return handler
 

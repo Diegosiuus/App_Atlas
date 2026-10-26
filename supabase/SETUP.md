@@ -3,7 +3,8 @@
 Run migrations `0001_initial_schema.sql`, `0002_player_game_results.sql`,
 `0003_usernames_review_and_training.sql`, and then
 `0004_tournament_format.sql` and `0005_archive_discontinued_saturdays.sql` in
-order in the Supabase SQL Editor, followed by `0006_admin_event_forms_and_tiers.sql`.
+order in the Supabase SQL Editor, followed by `0006_admin_event_forms_and_tiers.sql`
+and `0007_fix_admin_result_rejection.sql`.
 Migration 0004 preserves existing results,
 archives legacy events (while recognizing eligible 12-hour regular events),
 and adds experimental fields without deleting the old play-time column.
@@ -12,6 +13,8 @@ and archived, including on databases that applied an earlier 0004 draft.
 Migration 0006 adds event-level aggregate coin awards for the five rank bands,
 admin-only form RPCs, and prevents approval of player results until the event
 pool and all five bands have been recorded.
+Migration 0007 fixes the admin rejection path so a result can be rejected without
+event pool or tier data and the database trigger does not reset it to pending.
 
 After you have signed up and confirmed your own account, grant that account
 administrator access from the SQL Editor. Replace the email with the exact
