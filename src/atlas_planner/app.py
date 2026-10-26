@@ -892,18 +892,12 @@ def main(page: ft.Page) -> None:
             support_feedback.value = "Enviando…"
             support_feedback.color = MUTED
             page.update()
-            ticket_id = await asyncio.to_thread(
+            await asyncio.to_thread(
                 supabase.submit_support_ticket, ticket, session["access_token"]
             )
             support_subject_field.value = ""
             support_message_field.value = ""
             support_contact_email_field.value = ""
-            try:
-                await asyncio.to_thread(
-                    supabase.notify_support_ticket, ticket_id, session["access_token"]
-                )
-            except SupabaseError:
-                pass
             support_feedback.value = "Reporte guardado correctamente."
             support_feedback.color = TEAL
         except (SupabaseError, ValueError) as exc:
@@ -1292,6 +1286,11 @@ def main(page: ft.Page) -> None:
                 color=MUTED,
             ),
             purchase_field,
+            ft.Text(
+                "Compara tu ingreso mensual actual con el estimado al añadir esa cantidad de parcelas, usando rareza promedio.",
+                size=12,
+                color=MUTED,
+            ),
             ft.Button("Calcular ingresos", icon=ft.Icons.CALCULATE, on_click=income_result),
             save_profile_button,
             profile_feedback,
