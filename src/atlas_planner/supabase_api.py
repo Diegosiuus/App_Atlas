@@ -23,7 +23,7 @@ PROFILE_COLUMNS = (
     "badge_count,normal_boost_hours_per_day,srb_boost_hours_per_month"
 )
 GAME_SESSION_COLUMNS = (
-    "id,game,event_date,victories,final_position,losses,activity_phase,review_status,created_at"
+    "id,game,event_date,victories,final_position,coins_earned,losses,activity_phase,review_status,created_at"
 )
 
 
@@ -295,7 +295,7 @@ class SupabaseConfig:
         query = quote(user_id, safe="")
         return self._request(
             f"/rest/v1/player_game_sessions?select={GAME_SESSION_COLUMNS}"
-            f"&user_id=eq.{query}&review_status=neq.rejected"
+            f"&user_id=eq.{query}&review_status=eq.approved"
             f"&order=event_date.desc,created_at.desc&limit=100",
             access_token=access_token,
         )

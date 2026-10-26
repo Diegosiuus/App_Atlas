@@ -173,7 +173,8 @@ assert SupabaseConfig
         self.assertEqual(history, [{"game": "Racer", "victories": 20}])
         request = mocked_urlopen.call_args.args[0]
         self.assertIn("user_id=eq.user-1", request.full_url)
-        self.assertIn("review_status=neq.rejected", request.full_url)
+        self.assertIn("review_status=eq.approved", request.full_url)
+        self.assertIn("coins_earned", request.full_url)
         self.assertIn("order=event_date.desc,created_at.desc", request.full_url)
         self.assertEqual(request.get_header("Authorization"), "Bearer user-access-token")
 

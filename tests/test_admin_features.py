@@ -11,6 +11,8 @@ from atlas_planner.app import (
     _admin_import_rows,
     _build_admin_event_payload,
     _build_admin_observation_payload,
+    _build_player_position_payload,
+    _approved_game_sessions,
     _picker_selected_date,
     _build_profile_payload,
     _load_local_records,
@@ -71,6 +73,37 @@ class AdminImportTests(unittest.TestCase):
         self.assertEqual(observation["victories"], 123)
         self.assertEqual(set(observation), {"position", "victories"})
 
+    def test_admin_observations_only_accept_target_thresholds(self):
+        for rank in (25, 50, 100, 500, 1500):
+            with self.subTest(rank=rank):
+                self.assertEqual(
+                    _build_admin_observation_payload(str(rank), "139")["position"], rank
+                )
+        for rank in (1, 2, 3, 4, 24, 26, 1499, 1501):
+            with self.subTest(rank=rank), self.assertRaisesRegex(ValueError, "solo admiten"):
+                _build_admin_observation_payload(str(rank), "139")
+
+    def test_player_position_is_unbounded_and_positions_after_1500_earn_zero(self):
+        self.assertEqual(
+            _build_player_position_payload("2"),
+            {"final_position": 2, "coins_earned": None},
+        )
+        self.assertEqual(
+            _build_player_position_payload("1501"),
+            {"final_position": 1501, "coins_earned": 0},
+        )
+        with self.assertRaisesRegex(ValueError, "puesto final"):
+            _build_player_position_payload("")
+
+    def test_player_history_contains_only_approved_results(self):
+        records = [
+            {"id": 1, "review_status": "approved"},
+            {"id": 2, "review_status": "pending"},
+            {"id": 3, "review_status": "rejected"},
+        ]
+
+        self.assertEqual(_approved_game_sessions(records), [records[0]])
+
     def test_admin_observation_requires_victories(self):
         with self.assertRaisesRegex(ValueError, "victorias"):
             _build_admin_observation_payload("25", "")
@@ -110,6 +143,10 @@ class AdminImportTests(unittest.TestCase):
         self.assertEqual(rows[0]["losses"], 4)
         self.assertEqual(rows[0]["activity_phase"], "medio")
         self.assertNotIn("player", rows[0])
+
+    def test_admin_import_rejects_non_threshold_observations(self):
+        with self.assertRaisesRegex(ValueError, "puesto, victorias o bolsa"):
+            _admin_import_rows("Racer 21/09/2026 2 139 1000 NA 720 NA NA")
 
     def test_rejects_more_than_ten_losses_in_admin_import(self):
         with self.assertRaisesRegex(ValueError, "derrotas"):

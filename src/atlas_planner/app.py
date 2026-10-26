@@ -127,12 +127,25 @@ def _build_admin_observation_payload(position: str, victories: str) -> dict:
         raise ValueError("Indica cuántas victorias tuvo el jugador.")
     rank = _parse_number(position, "Puesto", integer=True)
     wins = _parse_number(victories, "Victorias", integer=True)
-    if not 4 <= rank <= 1500:
-        raise ValueError("El puesto debe estar entre 4 y 1500.")
+    if rank not in TARGET_POSITIONS:
+        raise ValueError("Las observaciones anónimas solo admiten los puestos 25, 50, 100, 500 y 1500.")
     return {
         "position": rank,
         "victories": wins,
     }
+
+
+def _build_player_position_payload(position: str) -> dict:
+    if not position.strip():
+        raise ValueError("Indica un puesto final igual o superior a 1.")
+    rank = _parse_number(position, "Puesto final", integer=True)
+    if rank < 1:
+        raise ValueError("El puesto final debe ser igual o superior a 1.")
+    return {"final_position": rank, "coins_earned": 0 if rank > 1500 else None}
+
+
+def _approved_game_sessions(records: list[dict]) -> list[dict]:
+    return [record for record in records if record.get("review_status") == "approved"]
 
 
 def _load_local_records(file_path: str | Path) -> list[GameRecord]:
@@ -239,7 +252,7 @@ def _admin_import_rows(raw_text: str) -> list[dict]:
 
         if event_date > date.today():
             raise ValueError(f"Línea {line_number}: no se admiten eventos futuros.")
-        if not 4 <= position <= 1500 or victories < 0 or total_coins <= 0:
+        if position not in TARGET_POSITIONS or victories < 0 or total_coins <= 0:
             raise ValueError(f"Línea {line_number}: puesto, victorias o bolsa inválidos.")
         position_key = (game, event_date, position)
         if position_key in seen_positions:
@@ -398,7 +411,7 @@ def main(page: ft.Page) -> None:
         result_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
     result_wins_field = _number_field("Victorias")
-    result_position_field = _number_field("Puesto final")
+    result_position_field = _number_field("Puesto final (1 o superior)", "")
     result_losses_field = _number_field("Derrotas (0–10)", "")
     result_phase_field = ft.Dropdown(
         label="Franja principal (opcional)",
@@ -470,7 +483,7 @@ def main(page: ft.Page) -> None:
         bracket: _number_field(f"Monedas agregadas · puestos {bracket[0]}–{bracket[1]}", "")
         for bracket in PRIZE_TIERS
     }
-    admin_observation_position = _number_field("Puesto (4–1500)", "")
+    admin_observation_position = _number_field("Puesto límite (25, 50, 100, 500 o 1500)", "")
     admin_observation_wins = _number_field("Victorias", "")
 
     prediction_date_picker = ft.DatePicker(
@@ -862,13 +875,10 @@ def main(page: ft.Page) -> None:
                 ft.Text("Inicia sesión para consultar tus partidas guardadas.", size=12, color=MUTED)
             )
             return
-        visible_sessions = [
-            record for record in saved_game_sessions
-            if record.get("review_status") != "rejected"
-        ]
+        visible_sessions = _approved_game_sessions(saved_game_sessions)
         if not visible_sessions:
             result_history.controls.append(
-                ft.Text("Todavía no hay resultados guardados.", size=12, color=MUTED)
+                ft.Text("Aún no hay partidas aprobadas para mostrar.", size=12, color=MUTED)
             )
             return
         for record in visible_sessions[:20]:
@@ -878,6 +888,8 @@ def main(page: ft.Page) -> None:
                 else ""
             )
             archived_note = " · histórico archivado" if record.get("review_status") == "archived" else ""
+            coins_earned = record.get("coins_earned")
+            coins_note = f" · {coins_earned} monedas" if coins_earned is not None else ""
             result_history.controls.append(
                 ft.Row(
                     controls=[
@@ -889,7 +901,7 @@ def main(page: ft.Page) -> None:
                         ft.Text(
                             f"{record['victories']} victorias · "
                             f"{record.get('losses') if record.get('losses') is not None else 'derrotas N/D'} "
-                            f"derrotas{position}{archived_note}",
+                            f"derrotas{position}{coins_note}{archived_note}",
                             color=MUTED,
                             size=12,
                         ),
@@ -932,20 +944,14 @@ def main(page: ft.Page) -> None:
             losses = _parse_number(raw_losses, "Derrotas", integer=True) if raw_losses else None
             if losses is not None and not 0 <= losses <= 10:
                 raise ValueError("Las derrotas deben estar entre 0 y 10.")
-            raw_position = (result_position_field.value or "").strip()
-            position = (
-                _parse_number(raw_position, "Puesto final", integer=True)
-                if raw_position
-                else None
-            )
-            if position is not None and not 1 <= position <= 1500:
-                raise ValueError("El puesto final debe estar entre 1 y 1500.")
+            position_payload = _build_player_position_payload(result_position_field.value or "")
+            position = position_payload["final_position"]
             record = {
                 "user_id": session["user_id"],
                 "game": game,
                 "event_date": event_date.isoformat(),
                 "victories": victories,
-                "final_position": position,
+                **position_payload,
                 "losses": losses,
                 "activity_phase": result_phase_field.value or None,
             }
@@ -966,9 +972,9 @@ def main(page: ft.Page) -> None:
             result_losses_field.value = ""
             result_phase_field.value = None
             result_feedback.value = (
-                "Resultado actualizado correctamente."
+                "Resultado actualizado y enviado para revisión."
                 if existed
-                else "Resultado guardado correctamente."
+                else "Resultado enviado para revisión. Aparecerá en Mis partidas cuando se apruebe."
             )
             result_feedback.color = TEAL
             try:
@@ -1441,14 +1447,14 @@ def main(page: ft.Page) -> None:
             if not session or session.get("is_admin") != "true":
                 return
             try:
-                total_coins = int(item["total_coins"]) if approve else None
+                total_coins = int(item["total_coins"]) if approve and item.get("total_coins") is not None else None
                 duration = 720 if approve else None
                 await asyncio.to_thread(
                     supabase.review_result,
                     int(item["id"]), approve, total_coins, duration,
                     (note_field.value or "").strip(), session["access_token"],
                 )
-                admin_feedback.value = "Resultado aprobado e incorporado al histórico." if approve else "Resultado rechazado."
+                admin_feedback.value = "Resultado aprobado." if approve else "Resultado rechazado."
                 admin_feedback.color = TEAL
                 if approve:
                     await refresh_training_records()
@@ -1473,8 +1479,15 @@ def main(page: ft.Page) -> None:
                     ft.Text(f"{rank_label} · {item['victories']} victorias · "
                             f"{item.get('losses') if item.get('losses') is not None else 'derrotas N/D'} derrotas", size=13, color=MUTED),
                     ft.Text(
-                        "Evento completo" if item.get("event_ready") else "Para aprobar, guarda la bolsa, los premios del top 1–3 y los cinco tramos. Puedes rechazar sin esos datos.",
-                        size=12, color=TEAL if item.get("event_ready") else AMBER,
+                        (
+                            "Se guardará en el historial personal; no se usa en predicciones."
+                            if position is not None and (int(position) < 4 or int(position) > 1500)
+                            else "Se usará en predicciones al aprobarlo."
+                            if item.get("event_ready")
+                            else "Se puede aprobar ahora; se incorporará al modelo cuando el evento tenga bolsa y premios completos."
+                        ),
+                        size=12,
+                        color=TEAL if item.get("event_ready") else AMBER,
                     ),
                     note_field,
                     ft.Row(
@@ -1482,7 +1495,7 @@ def main(page: ft.Page) -> None:
                             ft.Button(
                                 "Aprobar",
                                 icon=ft.Icons.CHECK,
-                                disabled=(position is None or not 4 <= int(position) <= 1500 or not item.get("event_ready")),
+                                disabled=(position is None or int(position) < 1),
                                 on_click=review_action(item, True, note_field),
                             ),
                             ft.Button(

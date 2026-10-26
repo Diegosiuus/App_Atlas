@@ -106,6 +106,36 @@ class AtlasIncomeTests(unittest.TestCase):
 
 
 class MinigameModelTests(unittest.TestCase):
+    def test_top_three_observations_do_not_affect_pool_or_victory_predictions(self):
+        records = make_records()
+        earlier_racer_date = _regular_date_for_game(
+            "Racer", min(record.event_date for record in records) - timedelta(days=1), direction=-1
+        )
+        top_two = GameRecord(
+            game="Racer",
+            event_date=earlier_racer_date,
+            position=2,
+            victories=139,
+            total_coins=999_999_999,
+            coins_earned=0,
+            played_minutes=None,
+            duration_minutes=720,
+            player=None,
+        )
+
+        baseline_pool = estimate_event_pool(records, "Racer", PREDICTION_DATE, 720)
+        baseline_victories = estimate_victories_for_position(
+            records, "Racer", 25, baseline_pool["estimated_coins"], PREDICTION_DATE, 720
+        )
+        records_with_top_two = [*records, top_two]
+        actual_pool = estimate_event_pool(records_with_top_two, "Racer", PREDICTION_DATE, 720)
+        actual_victories = estimate_victories_for_position(
+            records_with_top_two, "Racer", 25, actual_pool["estimated_coins"], PREDICTION_DATE, 720
+        )
+
+        self.assertEqual(actual_pool, baseline_pool)
+        self.assertEqual(actual_victories, baseline_victories)
+
     def test_regular_tournament_duration_and_last_saturdays_are_excluded(self):
         self.assertEqual(infer_event_duration_minutes(PREDICTION_DATE, "Racer"), 720)
         with self.assertRaisesRegex(ValueError, "ya no se celebran"):

@@ -4,16 +4,17 @@ Run migrations `0001_initial_schema.sql`, `0002_player_game_results.sql`,
 `0003_usernames_review_and_training.sql`, `0004_tournament_format.sql`,
 `0005_archive_discontinued_saturdays.sql`, `0006_admin_event_forms_and_tiers.sql`,
 `0007_fix_admin_result_rejection.sql`, `0008_enforce_tournament_rotation.sql`,
-and finally `0009_top_three_individual_awards.sql`, in that order in the Supabase
-SQL Editor.
+`0009_top_three_individual_awards.sql`, `0010_store_top_three_without_training.sql`,
+and finally `0011_player_history_and_training_scope.sql`, in that order in the
+Supabase SQL Editor.
 Migration 0004 preserves existing results,
 archives legacy events (while recognizing eligible 12-hour regular events),
 and adds experimental fields without deleting the old play-time column.
 Migration 0005 ensures discontinued last-Saturday events are labeled as legacy
 and archived, including on databases that applied an earlier 0004 draft.
-Migration 0006 adds event-level aggregate coin awards for the five rank bands,
-admin-only form RPCs, and prevents approval of player results until the event
-pool and all five bands have been recorded.
+Migration 0006 adds event-level aggregate coin awards for the five rank bands
+and admin-only form RPCs. Its initial approval prerequisite is superseded by
+migration 0011.
 Migration 0007 fixes the admin rejection path so a result can be rejected without
 event pool or tier data and the database trigger does not reset it to pending.
 Migration 0008 enforces the game rotation anchored at 5 April 2026 (Warship),
@@ -23,6 +24,14 @@ updated by date; player and admin forms report rotation mismatches before saving
 Migration 0009 adds separate awards for places 1, 2, and 3 to each event. Existing
 events retain their five aggregate bands and must have the three individual awards
 filled in before they are considered complete for observation entry or approval.
+Migration 0010 was superseded by 0011. Migration 0011 limits manual anonymous
+observations to positions 25, 50, 100, 500, and 1500; lets players record any
+positive final position; and stores zero coins for positions above 1500. Player
+results are visible in "Mis partidas" only after admin approval. Approval is not
+blocked by missing event prize data. Approved player results from positions 4–1500
+are included anonymously in training when the event data is complete; results at
+positions 1–3 or above 1500 remain only in the player's history. If the event is
+completed after approval, those eligible results are synchronized automatically.
 
 After you have signed up and confirmed your own account, grant that account
 administrator access from the SQL Editor. Replace the email with the exact

@@ -153,6 +153,7 @@ def _active_records(records: Iterable[GameRecord]) -> list[GameRecord]:
         and record.game in ACTIVE_GAMES
         and record.duration_minutes == TOURNAMENT_DURATION_MINUTES
         and not is_last_saturday(record.event_date)
+        and 4 <= record.position <= 1500
     ]
 
 
