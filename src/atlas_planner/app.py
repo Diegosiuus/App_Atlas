@@ -869,12 +869,16 @@ def main(page: ft.Page) -> None:
                 ft.Text("Inicia sesión para consultar tus partidas guardadas.", size=12, color=MUTED)
             )
             return
-        if not saved_game_sessions:
+        visible_sessions = [
+            record for record in saved_game_sessions
+            if record.get("review_status") != "rejected"
+        ]
+        if not visible_sessions:
             result_history.controls.append(
                 ft.Text("Todavía no hay resultados guardados.", size=12, color=MUTED)
             )
             return
-        for record in saved_game_sessions[:20]:
+        for record in visible_sessions[:20]:
             position = (
                 f" · puesto {record['final_position']}"
                 if record.get("final_position") is not None
@@ -900,6 +904,22 @@ def main(page: ft.Page) -> None:
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 )
             )
+
+    async def refresh_game_history() -> None:
+        if not session or supabase is None:
+            render_game_history()
+            return
+        try:
+            saved_game_sessions[:] = await asyncio.to_thread(
+                supabase.get_game_sessions,
+                session["user_id"],
+                session["access_token"],
+            )
+        except SupabaseError as exc:
+            result_feedback.value = f"No se pudo actualizar el historial: {exc}"
+            result_feedback.color = RED
+        render_game_history()
+        page.update()
 
     async def save_game_result(e: ft.Event[ft.Button]) -> None:
         if supabase is None or not session:
@@ -1433,6 +1453,7 @@ def main(page: ft.Page) -> None:
                 if approve:
                     await refresh_training_records()
                 await reload_pending_results()
+                await refresh_game_history()
             except (SupabaseError, ValueError, KeyError) as exc:
                 admin_feedback.value = str(exc)
                 admin_feedback.color = RED
@@ -1519,6 +1540,8 @@ def main(page: ft.Page) -> None:
                     color="white" if button_index == index else INK,
                 )
             page.update()
+            if index == 3 and session:
+                page.run_task(refresh_game_history)
             if index == 4 and session.get("is_admin") == "true":
                 page.run_task(reload_pending_results)
 

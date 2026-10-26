@@ -295,7 +295,8 @@ class SupabaseConfig:
         query = quote(user_id, safe="")
         return self._request(
             f"/rest/v1/player_game_sessions?select={GAME_SESSION_COLUMNS}"
-            f"&user_id=eq.{query}&order=event_date.desc,created_at.desc&limit=100",
+            f"&user_id=eq.{query}&review_status=neq.rejected"
+            f"&order=event_date.desc,created_at.desc&limit=100",
             access_token=access_token,
         )
 
