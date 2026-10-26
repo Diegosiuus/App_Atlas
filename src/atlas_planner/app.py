@@ -183,12 +183,12 @@ def _next_event_date(today: date | None = None) -> date:
     raise RuntimeError("No event date found in the next two weeks")
 
 
-def _previous_event_date(game: str, today: date | None = None) -> date:
+def _previous_event_date(today: date | None = None) -> date:
     start = today or date.today()
     for offset in range(15):
         candidate = start - timedelta(days=offset)
         try:
-            infer_event_duration_minutes(candidate, game)
+            expected_regular_game(candidate)
             return candidate
         except ValueError:
             continue
@@ -371,13 +371,13 @@ def main(page: ft.Page) -> None:
     purchase_field = _number_field("Parcelas adicionales")
     income_feedback = ft.Column(spacing=10)
 
+    prediction_event_date = _next_event_date()
     game_field = ft.Dropdown(
         label="Minijuego",
         value=expected_regular_game(prediction_event_date),
         options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
         expand=True,
     )
-    prediction_event_date = _next_event_date()
     date_field = ft.Button(
         prediction_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
@@ -388,13 +388,13 @@ def main(page: ft.Page) -> None:
         expand=True,
     )
     game_feedback = ft.Column(spacing=10)
+    result_event_date = _previous_event_date()
     result_game_field = ft.Dropdown(
         label="Minijuego",
-        value="Racer",
+        value=expected_regular_game(result_event_date),
         options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
         expand=True,
     )
-    result_event_date = _previous_event_date("Racer")
     result_date_field = ft.Button(
         result_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
@@ -452,12 +452,12 @@ def main(page: ft.Page) -> None:
     pending_results_view = ft.Column(spacing=10)
     known_pending_results: dict[int, tuple] | None = None
     admin_poll_future = None
+    admin_event_date = _previous_event_date()
     admin_game_field = ft.Dropdown(
-        label="Minijuego", value="Racer",
+        label="Minijuego", value=expected_regular_game(admin_event_date),
         options=[ft.DropdownOption(key=game, text=game) for game in sorted(ACTIVE_GAMES)],
         expand=True,
     )
-    admin_event_date = _previous_event_date("Racer")
     admin_event_exists: bool | None = False
     admin_event_date_button = ft.Button(
         admin_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
