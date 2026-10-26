@@ -86,7 +86,11 @@ def _picker_selected_date(event_value: object, control_value: object) -> date | 
 
 
 def _build_admin_event_payload(
-    game: str, event_date: date, total_coins: str, tier_values: dict[tuple[int, int], str]
+    game: str,
+    event_date: date,
+    total_coins: str,
+    top_award_values: dict[int, str],
+    tier_values: dict[tuple[int, int], str],
 ) -> dict:
     expected_duration = infer_event_duration_minutes(event_date, game)
     if event_date > date.today():
@@ -95,6 +99,12 @@ def _build_admin_event_payload(
     if pool <= 0:
         raise ValueError("La bolsa total debe ser mayor que cero.")
     tiers = []
+    for position in (1, 2, 3):
+        raw_value = (top_award_values.get(position) or "").strip()
+        if not raw_value:
+            raise ValueError(f"Completa las monedas del puesto {position}.")
+        amount = _parse_number(raw_value, f"Monedas del puesto {position}", integer=True)
+        tiers.append({"position_min": position, "position_max": position, "coins_awarded": amount})
     for minimum, maximum in PRIZE_TIERS:
         raw_value = (tier_values.get((minimum, maximum)) or "").strip()
         if not raw_value:
@@ -102,7 +112,7 @@ def _build_admin_event_payload(
         amount = _parse_number(raw_value, f"Monedas del tramo {minimum}–{maximum}", integer=True)
         tiers.append({"position_min": minimum, "position_max": maximum, "coins_awarded": amount})
     if sum(item["coins_awarded"] for item in tiers) > pool:
-        raise ValueError("La suma de los tramos no puede superar la bolsa total del evento.")
+        raise ValueError("La suma de los premios individuales y los tramos no puede superar la bolsa total.")
     return {
         "game": game,
         "event_date": event_date.isoformat(),
@@ -463,6 +473,10 @@ def main(page: ft.Page) -> None:
         admin_event_date.strftime("%d/%m/%Y"), icon=ft.Icons.CALENDAR_MONTH
     )
     admin_total_coins_field = _number_field("Bolsa total del evento", "")
+    admin_top_award_fields = {
+        position: _number_field(f"Premio individual · puesto {position}", "")
+        for position in (1, 2, 3)
+    }
     admin_tier_fields = {
         bracket: _number_field(f"Monedas agregadas · puestos {bracket[0]}–{bracket[1]}", "")
         for bracket in PRIZE_TIERS
@@ -1345,7 +1359,11 @@ def main(page: ft.Page) -> None:
         if not session or session.get("is_admin") != "true":
             return
         admin_event_exists = False
-        for field in (admin_total_coins_field, *admin_tier_fields.values()):
+        for field in (
+            admin_total_coins_field,
+            *admin_top_award_fields.values(),
+            *admin_tier_fields.values(),
+        ):
             field.value = ""
         try:
             event = await asyncio.to_thread(
@@ -1357,11 +1375,20 @@ def main(page: ft.Page) -> None:
                 admin_event_exists = True
                 admin_game_field.value = event["game"]
                 admin_total_coins_field.value = str(event["total_coins"])
+                loaded_top_positions: set[int] = set()
                 for tier in event.get("tiers", []):
                     bracket = (int(tier["position_min"]), int(tier["position_max"]))
-                    if bracket in admin_tier_fields:
+                    if bracket[0] == bracket[1] and bracket[0] in admin_top_award_fields:
+                        admin_top_award_fields[bracket[0]].value = str(tier["coins_awarded"])
+                        loaded_top_positions.add(bracket[0])
+                    elif bracket in admin_tier_fields:
                         admin_tier_fields[bracket].value = str(tier["coins_awarded"])
-                admin_feedback.value = "Datos existentes del evento cargados."
+                missing_top_positions = set(admin_top_award_fields) - loaded_top_positions
+                admin_feedback.value = (
+                    "Evento existente cargado; completa los premios que faltan del top 1–3."
+                    if missing_top_positions
+                    else "Datos existentes del evento cargados."
+                )
             else:
                 admin_game_field.value = expected_regular_game(admin_event_date)
                 admin_feedback.value = "Evento nuevo."
@@ -1382,6 +1409,7 @@ def main(page: ft.Page) -> None:
                 admin_game_field.value or "Racer",
                 admin_event_date,
                 admin_total_coins_field.value or "",
+                {position: field.value or "" for position, field in admin_top_award_fields.items()},
                 {bracket: field.value or "" for bracket, field in admin_tier_fields.items()},
             )
             await asyncio.to_thread(
@@ -1473,7 +1501,7 @@ def main(page: ft.Page) -> None:
                     ft.Text(f"{rank_label} · {item['victories']} victorias · "
                             f"{item.get('losses') if item.get('losses') is not None else 'derrotas N/D'} derrotas", size=13, color=MUTED),
                     ft.Text(
-                        "Evento completo" if item.get("event_ready") else "Para aprobar, guarda la bolsa y los cinco tramos. Puedes rechazar sin esos datos.",
+                        "Evento completo" if item.get("event_ready") else "Para aprobar, guarda la bolsa, los premios del top 1–3 y los cinco tramos. Puedes rechazar sin esos datos.",
                         size=12, color=TEAL if item.get("event_ready") else AMBER,
                     ),
                     note_field,
@@ -1506,6 +1534,9 @@ def main(page: ft.Page) -> None:
             _section_heading("Datos del evento", "La asignación por tramo es el total de monedas de todos los jugadores de ese rango."),
             ft.Row(controls=[admin_game_field, ft.Column(controls=[ft.Text("Fecha del evento", size=12, color=MUTED), admin_event_date_button], spacing=2)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.END),
             admin_total_coins_field,
+            _section_heading("Premios individuales · Top 1–3"),
+            *[admin_top_award_fields[position] for position in (1, 2, 3)],
+            _section_heading("Premios agregados por tramo"),
             *[admin_tier_fields[bracket] for bracket in PRIZE_TIERS],
             ft.Button("Guardar evento", icon=ft.Icons.SAVE, on_click=save_admin_event),
             _section_heading("Añadir observación anónima"),

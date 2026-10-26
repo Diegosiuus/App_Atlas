@@ -31,18 +31,28 @@ class AdminImportTests(unittest.TestCase):
             "Racer",
             date(2026, 9, 21),
             "1000",
+            {1: "20", 2: "15", 3: "10"},
             {(4, 25): "100", (26, 50): "100", (51, 100): "200", (101, 500): "300", (501, 1500): "200"},
         )
 
         self.assertEqual(payload["total_coins"], 1000)
         self.assertEqual(payload["duration_minutes"], 720)
-        self.assertEqual(len(payload["tiers"]), 5)
-        self.assertEqual(payload["tiers"][0]["coins_awarded"], 100)
+        self.assertEqual(len(payload["tiers"]), 8)
+        self.assertEqual(payload["tiers"][0], {"position_min": 1, "position_max": 1, "coins_awarded": 20})
+        self.assertEqual(payload["tiers"][3]["coins_awarded"], 100)
+
+    def test_admin_event_requires_each_individual_top_award(self):
+        with self.assertRaisesRegex(ValueError, "puesto 2"):
+            _build_admin_event_payload(
+                "Racer", date(2026, 9, 21), "1000", {1: "20", 2: "", 3: "10"},
+                {bracket: "0" for bracket in ((4, 25), (26, 50), (51, 100), (101, 500), (501, 1500))},
+            )
 
     def test_admin_event_rejects_tier_sum_over_pool(self):
         with self.assertRaisesRegex(ValueError, "no puede superar"):
             _build_admin_event_payload(
                 "Racer", date(2026, 9, 21), "100",
+                {1: "20", 2: "15", 3: "10"},
                 {bracket: "30" for bracket in ((4, 25), (26, 50), (51, 100), (101, 500), (501, 1500))},
             )
 
@@ -50,6 +60,7 @@ class AdminImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "corresponde a"):
             _build_admin_event_payload(
                 "Racer", date(2026, 4, 6), "1000",
+                {1: "20", 2: "15", 3: "10"},
                 {(4, 25): "100", (26, 50): "100", (51, 100): "200", (101, 500): "300", (501, 1500): "200"},
             )
 

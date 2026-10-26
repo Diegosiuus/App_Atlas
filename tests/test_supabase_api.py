@@ -227,7 +227,12 @@ assert SupabaseConfig
         event = {
             "game": "Racer", "event_date": "2026-09-21", "duration_minutes": 720,
             "total_coins": 1000,
-            "tiers": [{"position_min": 4, "position_max": 25, "coins_awarded": 100}],
+            "tiers": [
+                {"position_min": 1, "position_max": 1, "coins_awarded": 20},
+                {"position_min": 2, "position_max": 2, "coins_awarded": 15},
+                {"position_min": 3, "position_max": 3, "coins_awarded": 10},
+                {"position_min": 4, "position_max": 25, "coins_awarded": 100},
+            ],
         }
 
         self.config.save_admin_event_data(event, "user-access-token")
