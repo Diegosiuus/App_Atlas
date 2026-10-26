@@ -899,17 +899,13 @@ def main(page: ft.Page) -> None:
             support_message_field.value = ""
             support_contact_email_field.value = ""
             try:
-                email_sent = await asyncio.to_thread(
+                await asyncio.to_thread(
                     supabase.notify_support_ticket, ticket_id, session["access_token"]
                 )
             except SupabaseError:
-                email_sent = False
-            support_feedback.value = (
-                "Reporte registrado y aviso enviado. Gracias por ayudarnos a mejorar."
-                if email_sent
-                else "Reporte guardado. El aviso por correo no se pudo enviar, pero queda disponible en Admin."
-            )
-            support_feedback.color = TEAL if email_sent else AMBER
+                pass
+            support_feedback.value = "Reporte guardado correctamente."
+            support_feedback.color = TEAL
         except (SupabaseError, ValueError) as exc:
             support_feedback.value = str(exc)
             support_feedback.color = RED
