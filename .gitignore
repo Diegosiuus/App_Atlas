@@ -13,6 +13,7 @@ dist/
 coverage.xml
 htmlcov/
 /ROADMAP.md
+/Atlas Earth Calc.pdf
 
 # Local player datasets: keep personal/raw observations out of GitHub.
 /registro_juegos.txt
