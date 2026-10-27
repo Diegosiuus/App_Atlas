@@ -12,6 +12,7 @@ dist/
 *.egg-info/
 coverage.xml
 htmlcov/
+/ROADMAP.md
 
 # Local player datasets: keep personal/raw observations out of GitHub.
 /registro_juegos.txt
